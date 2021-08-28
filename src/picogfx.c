@@ -20,20 +20,14 @@ typedef struct {
 } HVTiming;
 
 void set_800_600(HVTiming *vga_timing, int scale) {
-    *vga_timing = {
-        .h = {
-            .visible_area = 800/scale,
-            .front_porch = 40/scale,
-            .sync_pulse = 128/scale,
-            .back_porch = 88/scale
-        },
-        .v = {
-            .visible_area = 600,
-            .front_porch = 1,
-            .sync_pulse = 4,
-            .back_porch = 23
-        }
-    };
+    vga_timing->h.visible_area = 800/scale;
+    vga_timing->h.front_porch = 40/scale;
+    vga_timing->h.sync_pulse = 128/scale;
+    vga_timing->h.back_porch = 88/scale;
+    vga_timing->v.visible_area = 600;
+    vga_timing->v.front_porch = 1;
+    vga_timing->v.sync_pulse = 4;
+    vga_timing->v.back_porch = 23;
 }
 
 uint16_t get_length(Timing *timing) {

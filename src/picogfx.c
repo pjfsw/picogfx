@@ -107,23 +107,25 @@ int main() {
     uint32_t framebuffer_size = 200;
     uint32_t framebuffer[framebuffer_size];
     for (int i = 0; i < framebuffer_size; i++) {
-        uint8_t rgb = i & 63;
+        uint32_t rgb = i & 63;
         framebuffer[i] = rgb | (rgb << 8) | (rgb << 16) | (rgb << 24);
     }
 
+    uint32_t vx = vga_timing.h.visible_area / 4;
+    uint32_t cx = columns / 4;
     while (true) {
         for (uint16_t y = 0 ; y < vga_timing.v.visible_area; y++) {
-            for (uint16_t x = 0; x < vga_timing.h.visible_area/4; x++) {
+            for (uint16_t x = 0; x < vx; x++) {
                 pio_sm_put_blocking(pio, sm, framebuffer[x]);
             }
-            for (uint16_t x = vga_timing.h.visible_area; x < columns/4; x++) {
+            for (uint16_t x = vx; x < cx; x++) {
                 pio_sm_put_blocking(pio, sm, row[0][x]);
             }
         }
         for (uint16_t y = vga_timing.v.visible_area ; y < rows; y++) {
             uint8_t row_type = row_def[y];
             uint32_t *sync = row[row_type];
-            for (uint16_t x = 0; x < columns/4; x++) {
+            for (uint16_t x = 0; x < cx; x++) {
                 pio_sm_put_blocking(pio, sm, sync[x]);
             }
         }

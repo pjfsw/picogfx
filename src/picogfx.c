@@ -19,7 +19,7 @@ typedef struct {
     Timing h;
     Timing v;
     float pixel_clock;
-    Uint8_t pixel_allowed_value;
+    uint8_t pixel_allowed_value;
 } HVTiming;
 
 void set_800_600(HVTiming *vga_timing, int scale) {
@@ -33,7 +33,7 @@ void set_800_600(HVTiming *vga_timing, int scale) {
     vga_timing->v.sync_pulse = 4;
     vga_timing->v.back_porch = 23;
     vga_timing->v.positive_pulse = 1;
-    vga_timing->v.pixel_allowed_value = 0;
+    vga_timing->pixel_allowed_value = 0;
     vga_timing->pixel_clock = 40000000.0/(float)scale;
 }
 
@@ -48,7 +48,7 @@ void set_640_480(HVTiming *vga_timing, int scale) {
     vga_timing->v.sync_pulse = 2;
     vga_timing->v.back_porch = 33;
     vga_timing->v.positive_pulse = 0;
-    vga_timing->v.pixel_allowed_value = 192;
+    vga_timing->pixel_allowed_value = 192;
     vga_timing->pixel_clock = 25000000.0/(float)scale;
 }
 
@@ -56,7 +56,7 @@ uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
 }
 
-void init_row(uint32_t row[], Timing *t, uint8_t vsync_mask) {
+void init_row(uint8_t row[], Timing *t, uint8_t vsync_mask) {
     uint8_t hsync_on_mask = 1 << HSYNC_BIT;
     uint8_t hsync_off_mask = 0;
     if (!t->positive_pulse) {
@@ -67,7 +67,6 @@ void init_row(uint32_t row[], Timing *t, uint8_t vsync_mask) {
     uint16_t pos = 0;
     for (int i = 0; i < t->visible_area; i++) {
         row[pos++] = hsync_off_mask | vsync_mask;
-        }
     }
     for (int i = 0; i < t->front_porch; i++) {
         row[pos++] = hsync_off_mask | vsync_mask;
@@ -100,9 +99,9 @@ int main() {
         vsync_on_mask = 0;
     }
 
-    init_row(row[0], &vga_timing.h, 63, vsync_off_mask);
-    init_row(row[1], &vga_timing.h, 0, vsync_off_mask);
-    init_row(row[2], &vga_timing.h, 0, vsync_on_mask);
+    init_row(row[0], &vga_timing.h, vsync_off_mask);
+    init_row(row[1], &vga_timing.h, vsync_off_mask);
+    init_row(row[2], &vga_timing.h, vsync_on_mask);
 
     uint8_t row_def[rows];
     uint16_t pos = 0;

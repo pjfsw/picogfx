@@ -9,11 +9,16 @@ project(picogfx)
 # initialize the Raspberry Pi Pico SDK
 pico_sdk_init()
 
-add_executable(picogfx
-    src/picogfx.c
-)
+add_executable(picogfx)
 
-target_link_libraries(picogfx pico_stdlib)
+pico_generate_pio_header(picogfx ${CMAKE_CURRENT_LIST_DIR}/src/vga.pio)
+
+target_sources(picogfx PRIVATE src/picogfx.c)
+
+target_link_libraries(picogfx PRIVATE 
+    pico_stdlib
+    hardware_pio
+    )
 pico_add_extra_outputs(picogfx)
 
 

@@ -38,18 +38,13 @@ uint16_t get_length(Timing *timing) {
 
 void init_row(uint32_t row[], Timing *t, uint8_t vsync_mask) {
     uint16_t pos = 0;
-    uint32_t v = 0;
     uint32_t vsync_mask32 = vsync_mask | (vsync_mask << 8) | (vsync_mask << 16) | (vsync_mask << 24);
 
     uint8_t hsync_mask = 1 << HSYNC_BIT;
     uint32_t hsync_mask32 = hsync_mask | (hsync_mask << 8) | (hsync_mask << 16) | (hsync_mask << 24);
 
-    for (int i = 0; i < t->visible_area; i++) {
-        v = v >> 8;
-        if (i % 4 == 3) {
-            row[pos++] = v | vsync_mask32;
-            v = 0;
-        }
+    for (int i = 0; i < t->visible_area/4; i++) {
+        row[pos++] = vsync_mask32;
     }
     for (int i = 0; i < t->front_porch/4; i++) {
         row[pos++] = vsync_mask32;

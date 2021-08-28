@@ -21,14 +21,18 @@ typedef struct {
 
 void set_800_600(HVTiming *vga_timing, int scale) {
     *vga_timing = {
-        .h.visible_area = 800/scale,
-        .h.front_porch = 40/scale,
-        .h.sync_pulse = 128/scale,
-        .h.back_porch = 88/scale,
-        .v.visible_area = 600,
-        .v.front_porch = 1,
-        .v.sync_pulse = 4,
-        .v.back_porch = 23
+        .h = {
+            .visible_area = 800/scale,
+            .front_porch = 40/scale,
+            .sync_pulse = 128/scale,
+            .back_porch = 88/scale
+        },
+        .v = {
+            .visible_area = 600,
+            .front_porch = 1,
+            .sync_pulse = 4,
+            .back_porch = 23
+        }
     };
 }
 
@@ -64,12 +68,6 @@ void init_row(uint32_t row[], Timing *t, uint8_t pixel_mask, uint8_t vsync_mask)
     }
 }
 
-void init_invisible_row(uint32_t row[], Timing *t) {
-    for (int i = 0; i < get_length(t)/4; i++) {
-        row[i] = 0;
-    }
-}
-
 int main() {
     const int scale = 2;
 
@@ -83,9 +81,9 @@ int main() {
     const uint8_t invisibleRow = 1;
     const uint8_t vsyncRow = 2;
     uint32_t row[3][columns/4];
-    init_visible_row(  row[0], &vga_timing.h, 63, 0);
-    init_invisible_row(row[1], &vga_timing.h, 0, 0);
-    init_vsync_row(    row[2], &vga_timing.h, 0, (1 << VSYNC_BIT));
+    init_row(row[0], &vga_timing.h, 63, 0);
+    init_row(row[1], &vga_timing.h, 0, 0);
+    init_row(row[2], &vga_timing.h, 0, (1 << VSYNC_BIT));
 
     uint8_t row_def[rows];
     uint16_t pos = 0;

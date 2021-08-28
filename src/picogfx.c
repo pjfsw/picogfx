@@ -12,6 +12,7 @@ typedef struct {
     uint16_t front_porch;
     uint16_t sync_pulse;
     uint16_t back_porch;
+    uint8_t positive_pulse;
 } Timing;
 
 typedef struct {
@@ -24,10 +25,25 @@ void set_800_600(HVTiming *vga_timing, int scale) {
     vga_timing->h.front_porch = 40/scale;
     vga_timing->h.sync_pulse = 128/scale;
     vga_timing->h.back_porch = 88/scale;
+    vga_timing->h.positive_pulse = 1;
     vga_timing->v.visible_area = 600;
     vga_timing->v.front_porch = 1;
     vga_timing->v.sync_pulse = 4;
     vga_timing->v.back_porch = 23;
+    vga_timing->v.positive_pulse = 1;
+}
+
+void set_640_480(HVTiming *vga_timing, int scale) {
+    vga_timing->h.visible_area = 640/scale;
+    vga_timing->h.front_porch = 16/scale;
+    vga_timing->h.sync_pulse = 96/scale;
+    vga_timing->h.back_porch = 48/scale;
+    vga_timing->h.positive_pulse = 0;
+    vga_timing->v.visible_area = 480;
+    vga_timing->v.front_porch = 10;
+    vga_timing->v.sync_pulse = 2;
+    vga_timing->v.back_porch = 33;
+    vga_timing->v.positive_pulse = 0;
 }
 
 uint16_t get_length(Timing *timing) {
@@ -40,25 +56,31 @@ void init_row(uint32_t row[], Timing *t, uint8_t pixel_mask, uint8_t vsync_mask)
     uint32_t v = 0;
     uint32_t vsync_mask32 = vsync_mask | (vsync_mask << 8) | (vsync_mask << 16) | (vsync_mask << 24);
 
+    uint8_t hsync_mask = 1 << HSYNC_BIT;
+    uint32_t hsync_off_mask32 = 0;
+    uint32_t hsync_on_mask32 = hsync_mask | (hsync_mask << 8) | (hsync_mask << 16) | (hsync_mask << 24);
+    if (!t->positive_pulse) {
+        hsync_off_mask32 = hsync_on_mask32;
+        hsync_on_mask32 = 0;
+    }
+
     for (int i = 0; i < t->visible_area; i++) {
         v = v >> 8;
         v |= (rgb & pixel_mask) << 24;
         if (i % 4 == 3) {
-            row[pos++] = v | vsync_mask32;
+            row[pos++] = v | hsync_off_mask32 | vsync_mask32;
             v = 0;
         }
         rgb++;
     }
     for (int i = 0; i < t->front_porch/4; i++) {
-        row[pos++] = vsync_mask32;
+        row[pos++] = hsync_off_mask32 | vsync_mask32;
     }
-    uint8_t hsync_mask = 1 << HSYNC_BIT;
-    uint32_t hsync_mask32 = hsync_mask | (hsync_mask << 8) | (hsync_mask << 16) | (hsync_mask << 24);
     for (int i = 0; i < t->sync_pulse/4; i++) {
-        row[pos++] = hsync_mask32 | vsync_mask32;
+        row[pos++] = hsync_on_mask32 | vsync_mask32;
     }
     for (int i = 0; i < t->back_porch/4; i++) {
-        row[pos++] = vsync_mask32;
+        row[pos++] = hsync_off_mask32 | vsync_mask32;
     }
 }
 
@@ -75,9 +97,16 @@ int main() {
     const uint8_t invisibleRow = 1;
     const uint8_t vsyncRow = 2;
     uint32_t row[3][columns/4];
-    init_row(row[0], &vga_timing.h, 63, 0);
-    init_row(row[1], &vga_timing.h, 0, 0);
-    init_row(row[2], &vga_timing.h, 0, (1 << VSYNC_BIT));
+    uint8_t vsync_on_mask = 1 << VSYNC_BIT;
+    uint8_t vsync_off_mask = 0;
+    if (!vga_timing.v.positive_pulse) {
+        vsync_off_mask = vsync_on_mask;
+        vsync_on_mask = 0;
+    }
+
+    init_row(row[0], &vga_timing.h, 63, vsync_off_mask);
+    init_row(row[1], &vga_timing.h, 0, vsync_off_mask);
+    init_row(row[2], &vga_timing.h, 0, vsync_on_mask);
 
     uint8_t row_def[rows];
     uint16_t pos = 0;

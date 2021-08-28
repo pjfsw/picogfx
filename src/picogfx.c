@@ -104,13 +104,12 @@ int main() {
     float div = 65535;
     vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);
 
-    uint8_t v = 0;
     while (true) {
-        //uint32_t v32 = (v++) | ((v++) << 8) | ((v++) << 16) | ((v++) << 24);
         for (uint16_t y = 0 ; y < rows; y++) {
             uint8_t row_type = row_def[y];
+            uint32_t *scanline = row[row_type];
             for (uint16_t x = 0; x < columns; x++) {
-                pio_sm_put_blocking(pio, sm, row[row_type][x]);
+                pio_sm_put_blocking(pio, sm, scanline[x]);
             }
         }
     }

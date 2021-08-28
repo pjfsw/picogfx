@@ -18,6 +18,7 @@ typedef struct {
 typedef struct {
     Timing h;
     Timing v;
+    float pixel_clock;
 } HVTiming;
 
 void set_800_600(HVTiming *vga_timing, int scale) {
@@ -31,6 +32,7 @@ void set_800_600(HVTiming *vga_timing, int scale) {
     vga_timing->v.sync_pulse = 4;
     vga_timing->v.back_porch = 23;
     vga_timing->v.positive_pulse = 1;
+    vga_timing->pixel_clock = 40000000.0/(float)scale;
 }
 
 void set_640_480(HVTiming *vga_timing, int scale) {
@@ -44,6 +46,22 @@ void set_640_480(HVTiming *vga_timing, int scale) {
     vga_timing->v.sync_pulse = 2;
     vga_timing->v.back_porch = 33;
     vga_timing->v.positive_pulse = 0;
+    vga_timing->pixel_clock = 25000000.0/(float)scale;
+}
+
+
+void set_640_400(HVTiming *vga_timing, int scale) {
+    vga_timing->h.visible_area = 640/scale;
+    vga_timing->h.front_porch = 16/scale;
+    vga_timing->h.sync_pulse = 96/scale;
+    vga_timing->h.back_porch = 48/scale;
+    vga_timing->h.positive_pulse = 0;
+    vga_timing->v.visible_area = 400;
+    vga_timing->v.front_porch = 12;
+    vga_timing->v.sync_pulse = 2;
+    vga_timing->v.back_porch = 35;
+    vga_timing->v.positive_pulse = 1;
+    vga_timing->pixel_clock = 25175000.0/(float)scale;
 }
 
 uint16_t get_length(Timing *timing) {
@@ -85,6 +103,8 @@ void init_row(uint32_t row[], Timing *t, uint8_t pixel_mask, uint8_t vsync_mask)
 }
 
 int main() {
+//    set_sys_clock_khz(140000, true);
+//    clock_configure(clk_sys, 0, 0, 0, 140000000);
     const int scale = 2;
 
     HVTiming vga_timing;
@@ -128,10 +148,7 @@ int main() {
 
     uint offset = pio_add_program(pio, &vga_program);
     uint sm = pio_claim_unused_sm(pio, true);
-    float freq = 20000000;
-    if (scale == 1) {
-      freq = 40000000;
-    }
+    float freq = vga_timing.pixel_clock;
     float div = clock_get_hz(clk_sys) / freq;
     //float div = 10000;
     vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);

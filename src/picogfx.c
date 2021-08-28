@@ -104,19 +104,24 @@ int main() {
     //float div = 10000;
     vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);
 
-    uint32_t framebuffer_size = 200;
-    uint32_t framebuffer[framebuffer_size];
+    uint32_t framebuffer_size = 400*300;
+    uint8_t framebuffer[framebuffer_size];
     for (int i = 0; i < framebuffer_size; i++) {
-        uint32_t rgb = i & 63;
-        framebuffer[i] = rgb | (rgb << 8) | (rgb << 16) | (rgb << 24);
+        uint8_t rgb = i & 63;
+        framebuffer[i] = rgb;
     }
 
     uint32_t vx = vga_timing.h.visible_area / 4;
     uint32_t cx = columns / 4;
+    uint32_t *framebuffer32 = (uint32_t*)framebuffer;
+
+    uint32_t fbpos = 0;
     while (true) {
         for (uint16_t y = 0 ; y < vga_timing.v.visible_area; y++) {
+            fbpos = y>>1;
             for (uint16_t x = 0; x < vx; x++) {
-                pio_sm_put_blocking(pio, sm, framebuffer[x]);
+                pio_sm_put_blocking(pio, sm, framebuffer32[fbpos]);
+                fbpos++;
             }
             for (uint16_t x = vx; x < cx; x++) {
                 pio_sm_put_blocking(pio, sm, row[0][x]);

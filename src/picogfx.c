@@ -108,7 +108,7 @@ int main() {
         for (uint16_t y = 0 ; y < rows; y++) {
             uint8_t row_type = row_def[y];
             uint32_t *scanline = row[row_type];
-            for (uint16_t x = 0; x < columns; x++) {
+            for (uint16_t x = 0; x < columns/4; x++) {
                 pio_sm_put_blocking(pio, sm, scanline[x]);
             }
         }

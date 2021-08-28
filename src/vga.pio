@@ -1,6 +1,5 @@
 .program vga
-    out pins,8 [31]
-    nop [31]
+    out pins,8
 
 %c-sdk {
 static inline void vga_program_init(PIO pio, uint sm, uint offset, uint pin, float clock_div) {

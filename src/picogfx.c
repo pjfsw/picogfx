@@ -99,9 +99,9 @@ int main() {
 
     uint offset = pio_add_program(pio, &vga_program);
     uint sm = pio_claim_unused_sm(pio, true);
-    // freq = VGA frequency
-    // float div = clock_get_hz(clk_sys) / freq;
-    float div = 65535;
+    float freq = 20000000;
+    float div = clock_get_hz(clk_sys) / freq;
+    //float div = 10000;
     vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);
 
     while (true) {

@@ -1,8 +1,11 @@
 .program vga
-    out pins,8
+    out pins,8 [24]
+    nop [24] 
+    nop [24]
+    nop [24]
 
 %c-sdk {
-static inline void vga_program_init(PIO pio, uint sm, uint offset, uint pin, float freq) {
+static inline void vga_program_init(PIO pio, uint sm, uint offset, uint pin, float clock_div) {
     for (int i = 0; i < 8; i++) {
         pio_gpio_init(pio, pin+i);
     }
@@ -15,8 +18,7 @@ static inline void vga_program_init(PIO pio, uint sm, uint offset, uint pin, flo
     sm_config_set_out_shift(&c, true, true, 32);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
 
-    float div = clock_get_hz(clk_sys) / freq;
-    sm_config_set_clkdiv(&c, div);
+    sm_config_set_clkdiv(&c, clock_div);
 
     pio_sm_init(pio, sm, offset, &c);
     pio_sm_set_enabled(pio, sm, true);

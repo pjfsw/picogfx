@@ -100,6 +100,9 @@ int main() {
     uint offset = pio_add_program(pio, &vga_program);
     uint sm = pio_claim_unused_sm(pio, true);
     float freq = 20000000;
+    if (scale == 1) {
+      freq = 40000000;
+    }
     float div = clock_get_hz(clk_sys) / freq;
     //float div = 10000;
     vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);

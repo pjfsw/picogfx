@@ -9,12 +9,12 @@ int main() {
 
     uint offset = pio_add_program(pio, &vga_program);
     uint sm = pio_claim_unused_sm(pio, true);
-    vga_program_init(pio, sm, offset, VGA_BASE_PIN);
+    float frequency = 4.0;
+    vga_program_init(pio, sm, offset, VGA_BASE_PIN, frequency);
 
+    uint8_t v = 0;
     while (true) {
-        pio_sm_put_blocking(pio, sm, 0xaa);
-        sleep_ms(500);
-        pio_sm_put_blocking(pio, sm, 0x55);
-        sleep_ms(500);            
+        uint32_t v32 = (v++) | ((v++) << 8) | ((v++) << 16) | ((v++) << 24);
+        pio_sm_put_blocking(pio, sm, v32);
     }
 }

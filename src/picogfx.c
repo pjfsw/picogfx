@@ -26,7 +26,7 @@ typedef struct {
 } HVTiming;
 
 uint16_t last_visible_row = 0;
-uint16_t half_width;
+uint8_t chars_per_line;
 HVTiming vga_timing;
 int dma_chan[2];
 uint16_t current_dma;
@@ -41,10 +41,10 @@ const int VBLANK_BUFFER = 2;
 const int VSYNC_BUFFER = 3;
 const int PIXEL_BUFFER_2 = 4; // Special buffer :)
 
-char message[] = "ABCDCCCC";
+char message[] = "ABCDEDCB";
 uint8_t frameCounter = 0;
 uint8_t screen[50*37];
-
+uint8_t palette[] = {3, 12, 48, 63};
 uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
 }
@@ -61,7 +61,7 @@ void set_800_600(HVTiming *vga_timing, int scale) {
     vga_timing->v.back_porch = 23;
     vga_timing->v.length = get_length(&vga_timing->v);
     vga_timing->pixel_clock = 40000000.0/(float)scale;
-    half_width = vga_timing->h.visible_area/2;
+    chars_per_line = vga_timing->h.visible_area >> 3;
     last_visible_row = vga_timing->v.visible_area & 0xfff0; // Don't want to show half a tile row
 }
 
@@ -93,6 +93,41 @@ int isDebug() {
     return gpio_get(DEBUG_PIN);
 }
 
+static inline void draw_sprites(uint8_t *fb) {
+    uint8_t color = (next_row & 1) ? 60: 3;
+    for (int x = 0; x < 64; x++) {
+        fb[x] = color;
+    }
+}
+
+static inline void draw_tiles(uint8_t *fb) {
+    uint8_t tile_row = (next_row >> 1) & 7;
+    uint8_t colors[] = {0,palette[(next_row >> 4)&3]};
+    uint8_t tile;
+    uint8_t shift = 0;//scrollX;
+    uint8_t c;
+    uint16_t xpos = 0;
+    for (int tile = 0; tile < chars_per_line; tile++) {
+        uint8_t c = font[message[tile & 7]][tile_row];
+        fb[xpos++] =  colors[c>>7];
+        c = c << 1;
+        fb[xpos++] =  colors[c>>7];
+        c = c << 1;
+        fb[xpos++] =  colors[c>>7];
+        c = c << 1;
+        fb[xpos++] =  colors[c>>7];
+        c = c << 1;
+        fb[xpos++] =  colors[c>>7];
+        c = c << 1;
+        fb[xpos++] =  colors[c>>7];
+        c = c << 1;
+        fb[xpos++] =  colors[c>>7];
+        c = c << 1;
+        fb[xpos++] =  colors[c>>7];
+        c = c << 1;
+    }
+}
+
 void dma_handler() {
     // Clear the interrupt request
     dma_hw->ints0 = 1u << dma_chan[current_dma];
@@ -108,17 +143,10 @@ void dma_handler() {
         frameCounter++;
     }
     if (next_row < last_visible_row) {
-        uint8_t scrollX = frameCounter&7;
-        uint16_t xpos = (next_row & 1) * half_width;
-        uint8_t tile_row = (next_row >> 1) & 7;
-        uint8_t colors[] = {0,63};
-        int x;
-        uint8_t tile;
-        uint8_t shift = scrollX;
-        for (int x = 0; x < half_width; x++) {
-            tile = (x >> 3);
-            shift = (shift - 1) & 7;
-            fb[xpos++] = colors[(font[65][tile_row] >> shift) & 1];
+        if (next_row & 1) {
+            draw_sprites(fb);
+        } else {
+            draw_tiles(fb);
         }
     }
 }

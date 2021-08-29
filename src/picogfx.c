@@ -6,10 +6,12 @@
 #include "hardware/irq.h"
 #include "vga.pio.h"
 #include "font.h"
+#include "math.h"
 
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
 #define DEBUG_PIN 7
+#define NUMBER_OF_SPRITES 32
 
 typedef struct {
     uint16_t visible_area;
@@ -31,20 +33,46 @@ HVTiming vga_timing;
 int dma_chan[2];
 uint16_t current_dma;
 uint16_t next_row;
+uint16_t pixel_row;
 uint8_t framebuffer_index[628];
 // We probably[tm] won't use higher resolutions than 800x600
 uint8_t framebuffer[5][1056];
+uint8_t spriteX[NUMBER_OF_SPRITES];
+uint8_t spritePos[NUMBER_OF_SPRITES];
+uint8_t spriteY[NUMBER_OF_SPRITES];
+uint8_t spriteData[] =
+{
+    0,63,63,63,63,63,63,0,   3,3,3,3,3,3,3,3,
+    63,63,63,63,63,63,63,63, 3,3,3,3,3,3,3,3,
+    63, 1, 1,63,63, 1, 1,63, 3,3,3,3,3,3,3,3,
+    63,63,63,63,63,63,63,63, 3,3,3,3,3,3,3,3,
+    63,63,63,63,63,63,63,63, 3,3,3,3,3,3,3,3,
+    63, 1,63,63,63,63, 1,63, 3,3,3,3,3,3,3,3,
+    63,63, 1, 1, 1, 1,63,63, 3,3,3,3,3,3,3,3,
+     0,63,63,63,63,63,63,0,  3,3,3,3,3,3,3,3,
+     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
+};
 
 const int PIXEL_BUFFER_0 = 0;
 const int PIXEL_BUFFER_1 = 1;
-const int VBLANK_BUFFER = 2;
-const int VSYNC_BUFFER = 3;
-const int PIXEL_BUFFER_2 = 4; // Special buffer :)
+const int BLACK_BUFFER = 2; // Special buffer :)
+const int VBLANK_BUFFER = 3;
+const int VSYNC_BUFFER = 4;
 
 char message[] = "ABCDEDCB";
 uint8_t frameCounter = 0;
 uint8_t screen[50*37];
 uint8_t palette[] = {3, 12, 48, 63};
+uint8_t sinTable[256];
+uint8_t cosTable[256];
+
 uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
 }
@@ -94,21 +122,34 @@ int isDebug() {
 }
 
 static inline void draw_sprites(uint8_t *fb) {
-    uint8_t color = (next_row & 1) ? 60: 3;
-    for (int x = 0; x < 64; x++) {
-        fb[x] = color;
+    for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
+        uint16_t xPos = spriteX[i];
+        int16_t spritePos = pixel_row-spriteY[i];
+        if (spritePos < 0 || spritePos > 15) {
+            continue;
+        }
+        spritePos = spritePos << 4;
+
+        for (int x = 0; x < 16; x++) {
+            uint8_t c = spriteData[spritePos++];
+            if (c > 0) {
+                fb[xPos] = c;
+            }
+            xPos++;
+        }
     }
 }
 
 static inline void draw_tiles(uint8_t *fb) {
-    uint8_t tile_row = (next_row >> 1) & 7;
-    uint8_t colors[] = {0,palette[(next_row >> 4)&3]};
+    uint8_t tile_row = pixel_row & 7;
+    uint8_t colors[] = {0,palette[(pixel_row >> 3)&3]};
     uint8_t tile;
     uint8_t shift = 0;//scrollX;
     uint8_t c;
     uint16_t xpos = 0;
     for (int tile = 0; tile < chars_per_line; tile++) {
         uint8_t c = font[message[tile & 7]][tile_row];
+        uint8_t colors[] = {tile&63,palette[(pixel_row >> 3)&3]};
         fb[xpos++] =  colors[c>>7];
         c = c << 1;
         fb[xpos++] =  colors[c>>7];
@@ -134,6 +175,7 @@ void dma_handler() {
     // The chained DMA has already started the next row when IRQ happens, so we need to increase
     // the counter here to be in sync with what we are setting up for next IRQ
     next_row = (next_row + 1) % vga_timing.v.length;
+    pixel_row = next_row >> 1;
 
     uint8_t *fb = framebuffer[framebuffer_index[next_row]];
     dma_channel_set_read_addr(dma_chan[current_dma], fb, false);
@@ -141,11 +183,19 @@ void dma_handler() {
 
     if (next_row == 0) {
         frameCounter++;
+        for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
+            //spriteX[i]++;
+            spritePos[i]++;
+            spriteY[i] = sinTable[spritePos[i]];
+            spriteX[i] = cosTable[spritePos[i]];
+        }
     }
     if (next_row < last_visible_row) {
         if (next_row & 1) {
+            // Draw sprites on top of tiles
             draw_sprites(fb);
         } else {
+            // Fill entire frame buffer with tiles on even lines
             draw_tiles(fb);
         }
     }
@@ -154,14 +204,14 @@ void dma_handler() {
 void init_frame_buffers() {
     uint8_t vsync_on_mask = 1 << VSYNC_BIT;
     uint8_t vsync_off_mask = 0;
-    // First two framebuffers are for visible display (double buffering)
-    init_row((uint32_t*)framebuffer[0], &vga_timing.h, vsync_off_mask);
-    init_row((uint32_t*)framebuffer[1], &vga_timing.h, vsync_off_mask);
-    init_row((uint32_t*)framebuffer[4], &vga_timing.h, vsync_off_mask); // Blank but not vblank
+    // Three framebuffers are for visible display (tripple buffering) + one with black pixels
+    for (int i = 0; i < 3; i++) {
+        init_row((uint32_t*)framebuffer[i], &vga_timing.h, vsync_off_mask);
+    }
     // Vertical blank buffer, no pixels
-    init_row((uint32_t*)framebuffer[2], &vga_timing.h, vsync_off_mask);
+    init_row((uint32_t*)framebuffer[VBLANK_BUFFER], &vga_timing.h, vsync_off_mask);
     // Vertical sync buffer, no pixels
-    init_row((uint32_t*)framebuffer[3], &vga_timing.h, vsync_on_mask);
+    init_row((uint32_t*)framebuffer[VSYNC_BUFFER], &vga_timing.h, vsync_on_mask);
 
     int row = 0;
     for (int i = 0; i < last_visible_row; i++) {
@@ -169,7 +219,7 @@ void init_frame_buffers() {
         row++;
     }
     for (int i = last_visible_row; i < vga_timing.v.visible_area; i++) {
-        framebuffer_index[row++] = PIXEL_BUFFER_2;
+        framebuffer_index[row++] = BLACK_BUFFER;
     }
     for (int i = 0; i < vga_timing.v.front_porch; i++) {
         framebuffer_index[row++] = VBLANK_BUFFER;
@@ -182,8 +232,21 @@ void init_frame_buffers() {
     }
 }
 
+void init_sprites() {
+    for (int i = 0; i < 256; i++) {
+        sinTable[i] = 128 + 127 * sin(i * M_PI / 128);
+        cosTable[i] = 128 + 127 * cos(i * M_PI / 64);
+    }
+    const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
+    for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
+        spritePos[i] = i << 2;
+    }
+
+}
+
 int main() {
     set_sys_clock_khz(180000, true);
+    //set_sys_clock_khz(140000, true);
 //    clock_configure(clk_sys, 0, 0, 0, 140000000);
     const int scale = 2;
     int debug = isDebug();
@@ -199,6 +262,7 @@ int main() {
     float freq = vga_timing.pixel_clock;
     float div = debug ? 65535 : (clock_get_hz(clk_sys) / freq);
 
+    init_sprites();
     vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);
 
     uint16_t columns = get_length(&vga_timing.h);

@@ -247,8 +247,8 @@ void init_frame_buffers() {
 
 void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
-        sinTable[i] = 150 + 140 * sin(i * M_PI / 128);
-        cosTable[i] = 200 + 190 * cos(i * M_PI / 128);
+        sinTable[i] = 140 + 140 * sin(i * M_PI / 128);
+        cosTable[i] = 192 + 192 * cos(i * M_PI / 128);
     }
     const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {

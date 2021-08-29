@@ -11,6 +11,8 @@
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
 #define DEBUG_PIN 7
+#define SCRW 64
+#define SCRH 64
 #define NUMBER_OF_SPRITES 32
 
 typedef struct {
@@ -37,6 +39,7 @@ uint16_t pixel_row;
 uint8_t framebuffer_index[628];
 // We probably[tm] won't use higher resolutions than 800x600
 uint8_t framebuffer[5][1056];
+uint16_t scrollY;
 uint8_t spriteX[NUMBER_OF_SPRITES];
 uint8_t spritePos[NUMBER_OF_SPRITES];
 uint8_t spriteY[NUMBER_OF_SPRITES];
@@ -66,9 +69,9 @@ const int BLACK_BUFFER = 2; // Special buffer :)
 const int VBLANK_BUFFER = 3;
 const int VSYNC_BUFFER = 4;
 
-char message[] = "ABCDEDCB";
+uint8_t screen[SCRW * SCRH];
+uint8_t colorMem[SCRW * SCRH];
 uint8_t frameCounter = 0;
-uint8_t screen[50*37];
 uint8_t palette[] = {3, 12, 48, 63};
 uint8_t sinTable[256];
 uint8_t cosTable[256];
@@ -141,15 +144,18 @@ static inline void draw_sprites(uint8_t *fb) {
 }
 
 static inline void draw_tiles(uint8_t *fb) {
-    uint8_t tile_row = pixel_row & 7;
-    uint8_t colors[] = {0,palette[(pixel_row >> 3)&3]};
+    uint16_t scroll_row = (pixel_row + scrollY) & 0x1ff;
+    uint8_t tile_row = scroll_row & 7;
+    uint8_t *scrPos = &screen[(scroll_row >> 3) << 6];
+    uint8_t *colorPos = &colorMem[(scroll_row >> 3) << 6];
+    uint8_t colors[] = {0,63};
     uint8_t tile;
-    uint8_t shift = 0;//scrollX;
+    uint8_t shift = 0;
     uint8_t c;
     uint16_t xpos = 0;
     for (int tile = 0; tile < chars_per_line; tile++) {
-        uint8_t c = font[message[tile & 7]][tile_row];
-        uint8_t colors[] = {tile&63,palette[(pixel_row >> 3)&3]};
+        colors[1] = colorPos[tile] & 63;
+        uint8_t c = font[scrPos[tile]][tile_row];
         fb[xpos++] =  colors[c>>7];
         c = c << 1;
         fb[xpos++] =  colors[c>>7];
@@ -183,6 +189,7 @@ void dma_handler() {
 
     if (next_row == 0) {
         frameCounter++;
+        scrollY++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
             //spriteX[i]++;
             spritePos[i]++;
@@ -232,7 +239,7 @@ void init_frame_buffers() {
     }
 }
 
-void init_sprites() {
+void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
         sinTable[i] = 128 + 127 * sin(i * M_PI / 128);
         cosTable[i] = 128 + 127 * cos(i * M_PI / 64);
@@ -240,6 +247,10 @@ void init_sprites() {
     const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         spritePos[i] = i << 2;
+    }
+    for (int i = 0; i < SCRW*SCRH; i++) {
+        screen[i] = i & 255;
+        colorMem[i] = i & 63;
     }
 
 }
@@ -262,7 +273,7 @@ int main() {
     float freq = vga_timing.pixel_clock;
     float div = debug ? 65535 : (clock_get_hz(clk_sys) / freq);
 
-    init_sprites();
+    init_app_stuff();
     vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);
 
     uint16_t columns = get_length(&vga_timing.h);

@@ -6,6 +6,7 @@
 #include "hardware/irq.h"
 #include "vga.pio.h"
 #include "font.h"
+#include "spritedata.h"
 #include "math.h"
 
 #define HSYNC_BIT 6
@@ -13,7 +14,7 @@
 #define DEBUG_PIN 7
 #define SCRW 64
 #define SCRH 64
-#define NUMBER_OF_SPRITES 32
+#define NUMBER_OF_SPRITES 16
 
 typedef struct {
     uint16_t visible_area;
@@ -40,10 +41,10 @@ uint8_t framebuffer_index[628];
 // We probably[tm] won't use higher resolutions than 800x600
 uint8_t framebuffer[5][1056];
 uint16_t scrollY;
-uint8_t spriteX[NUMBER_OF_SPRITES];
+uint16_t spriteX[NUMBER_OF_SPRITES];
+uint16_t spriteY[NUMBER_OF_SPRITES];
 uint8_t spritePos[NUMBER_OF_SPRITES];
-uint8_t spriteY[NUMBER_OF_SPRITES];
-uint8_t spriteData[] =
+/*uint8_t spriteData[] =
 {
     0,63,63,63,63,63,63,0,   3,3,3,3,3,3,3,3,
     63,63,63,63,63,63,63,63, 3,3,3,3,3,3,3,3,
@@ -61,7 +62,7 @@ uint8_t spriteData[] =
      7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
      7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
      7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-};
+};*/
 
 const int PIXEL_BUFFER_0 = 0;
 const int PIXEL_BUFFER_1 = 1;
@@ -73,8 +74,8 @@ uint8_t screen[SCRW * SCRH];
 uint8_t colorMem[SCRW * SCRH];
 uint8_t frameCounter = 0;
 uint8_t palette[] = {3, 12, 48, 63};
-uint8_t sinTable[256];
-uint8_t cosTable[256];
+uint16_t sinTable[256];
+uint16_t cosTable[256];
 
 uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
@@ -126,17 +127,22 @@ int isDebug() {
 
 static inline void draw_sprites(uint8_t *fb) {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
-        uint16_t xPos = spriteX[i];
         int16_t spritePos = pixel_row-spriteY[i];
         if (spritePos < 0 || spritePos > 15) {
             continue;
         }
         spritePos = spritePos << 4;
 
-        for (int x = 0; x < 16; x++) {
-            uint8_t c = spriteData[spritePos++];
-            if (c > 0) {
-                fb[xPos] = c;
+        int n = 16;
+        uint16_t xPos = spriteX[i];
+        if (xPos > vga_timing.h.visible_area-16) {
+            n = vga_timing.h.visible_area-xPos;
+        }
+
+        for (int x = 0; x < n; x++) {
+            uint8_t c = spritedata[spritePos++];
+            if ((c & 0x80) == 0) {
+                fb[xPos] = c & 63;
             }
             xPos++;
         }
@@ -241,8 +247,8 @@ void init_frame_buffers() {
 
 void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
-        sinTable[i] = 128 + 127 * sin(i * M_PI / 128);
-        cosTable[i] = 128 + 127 * cos(i * M_PI / 64);
+        sinTable[i] = 150 + 140 * sin(i * M_PI / 128);
+        cosTable[i] = 200 + 190 * cos(i * M_PI / 128);
     }
     const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
@@ -256,7 +262,7 @@ void init_app_stuff() {
 }
 
 int main() {
-    set_sys_clock_khz(180000, true);
+    set_sys_clock_khz(200000, true);
     //set_sys_clock_khz(140000, true);
 //    clock_configure(clk_sys, 0, 0, 0, 140000000);
     const int scale = 2;

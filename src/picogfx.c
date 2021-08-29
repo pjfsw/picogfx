@@ -25,6 +25,7 @@ typedef struct {
     float pixel_clock;
 } HVTiming;
 
+uint16_t last_visible_row = 0;
 uint16_t half_width;
 HVTiming vga_timing;
 int dma_chan[2];
@@ -32,17 +33,17 @@ uint16_t current_dma;
 uint16_t next_row;
 uint8_t framebuffer_index[628];
 // We probably[tm] won't use higher resolutions than 800x600
-uint8_t framebuffer[4][1056];
+uint8_t framebuffer[5][1056];
 
 const int PIXEL_BUFFER_0 = 0;
 const int PIXEL_BUFFER_1 = 1;
 const int VBLANK_BUFFER = 2;
 const int VSYNC_BUFFER = 3;
+const int PIXEL_BUFFER_2 = 4; // Special buffer :)
 
-char message[] = "ABCDCCBB";
-
+char message[] = "ABCDCCCC";
 uint8_t frameCounter = 0;
-
+uint8_t screen[50*37];
 
 uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
@@ -61,6 +62,7 @@ void set_800_600(HVTiming *vga_timing, int scale) {
     vga_timing->v.length = get_length(&vga_timing->v);
     vga_timing->pixel_clock = 40000000.0/(float)scale;
     half_width = vga_timing->h.visible_area/2;
+    last_visible_row = vga_timing->v.visible_area & 0xfff0; // Don't want to show half a tile row
 }
 
 
@@ -105,31 +107,18 @@ void dma_handler() {
     if (next_row == 0) {
         frameCounter++;
     }
-    if (next_row < vga_timing.v.visible_area) {
+    if (next_row < last_visible_row) {
+        uint8_t scrollX = frameCounter&7;
         uint16_t xpos = (next_row & 1) * half_width;
         uint8_t tile_row = (next_row >> 1) & 7;
         uint8_t colors[] = {0,63};
         int x;
-        for (int tile = 0; tile < half_width >> 3; tile++) {
-            colors[1] = tile&63;
-
-            uint8_t c = font[message[tile & 7]][tile_row];
-            fb[xpos++] =  colors[c>>7];
-            c = c << 1;
-            fb[xpos++] =  colors[c>>7];
-            c = c << 1;
-            fb[xpos++] =  colors[c>>7];
-            c = c << 1;
-            fb[xpos++] =  colors[c>>7];
-            c = c << 1;
-            fb[xpos++] =  colors[c>>7];
-            c = c << 1;
-            fb[xpos++] =  colors[c>>7];
-            c = c << 1;
-            fb[xpos++] =  colors[c>>7];
-            c = c << 1;
-            fb[xpos++] =  colors[c>>7];
-            c = c << 1;
+        uint8_t tile;
+        uint8_t shift = scrollX;
+        for (int x = 0; x < half_width; x++) {
+            tile = (x >> 3);
+            shift = (shift - 1) & 7;
+            fb[xpos++] = colors[(font[65][tile_row] >> shift) & 1];
         }
     }
 }
@@ -140,15 +129,19 @@ void init_frame_buffers() {
     // First two framebuffers are for visible display (double buffering)
     init_row((uint32_t*)framebuffer[0], &vga_timing.h, vsync_off_mask);
     init_row((uint32_t*)framebuffer[1], &vga_timing.h, vsync_off_mask);
+    init_row((uint32_t*)framebuffer[4], &vga_timing.h, vsync_off_mask); // Blank but not vblank
     // Vertical blank buffer, no pixels
     init_row((uint32_t*)framebuffer[2], &vga_timing.h, vsync_off_mask);
     // Vertical sync buffer, no pixels
     init_row((uint32_t*)framebuffer[3], &vga_timing.h, vsync_on_mask);
 
     int row = 0;
-    for (int i = 0; i < vga_timing.v.visible_area; i++) {
+    for (int i = 0; i < last_visible_row; i++) {
         framebuffer_index[row] = (row >> 1) % 2;
         row++;
+    }
+    for (int i = last_visible_row; i < vga_timing.v.visible_area; i++) {
+        framebuffer_index[row++] = PIXEL_BUFFER_2;
     }
     for (int i = 0; i < vga_timing.v.front_porch; i++) {
         framebuffer_index[row++] = VBLANK_BUFFER;
@@ -162,7 +155,7 @@ void init_frame_buffers() {
 }
 
 int main() {
-//    set_sys_clock_khz(160000, true);
+    set_sys_clock_khz(180000, true);
 //    clock_configure(clk_sys, 0, 0, 0, 140000000);
     const int scale = 2;
     int debug = isDebug();
@@ -180,13 +173,7 @@ int main() {
 
     vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);
 
-    for (int i = 0; i < vga_timing.h.visible_area; i++) {
-        framebuffer[0][i] = i & 63;
-        framebuffer[1][i] = ((i>>4) % 2) ? 0b00101010 : 0b00010101;
-    }
-
     uint16_t columns = get_length(&vga_timing.h);
-    //uint16_t rows = get_length(&vga_timing.v);
 
     dma_chan[0] = dma_claim_unused_channel(true);
     dma_chan[1] = dma_claim_unused_channel(true);

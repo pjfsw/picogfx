@@ -5,6 +5,7 @@
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "vga.pio.h"
+#include "font.h"
 
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
@@ -24,6 +25,7 @@ typedef struct {
     float pixel_clock;
 } HVTiming;
 
+uint16_t half_width;
 HVTiming vga_timing;
 int dma_chan[2];
 uint16_t current_dma;
@@ -36,6 +38,10 @@ const int PIXEL_BUFFER_0 = 0;
 const int PIXEL_BUFFER_1 = 1;
 const int VBLANK_BUFFER = 2;
 const int VSYNC_BUFFER = 3;
+
+char message[] = "ABCDCCBB";
+
+uint8_t frameCounter = 0;
 
 
 uint16_t get_length(Timing *timing) {
@@ -54,6 +60,7 @@ void set_800_600(HVTiming *vga_timing, int scale) {
     vga_timing->v.back_porch = 23;
     vga_timing->v.length = get_length(&vga_timing->v);
     vga_timing->pixel_clock = 40000000.0/(float)scale;
+    half_width = vga_timing->h.visible_area/2;
 }
 
 
@@ -91,8 +98,40 @@ void dma_handler() {
     // the counter here to be in sync with what we are setting up for next IRQ
     next_row = (next_row + 1) % vga_timing.v.length;
 
-    dma_channel_set_read_addr(dma_chan[current_dma], framebuffer[framebuffer_index[next_row]], false);
+    uint8_t *fb = framebuffer[framebuffer_index[next_row]];
+    dma_channel_set_read_addr(dma_chan[current_dma], fb, false);
     current_dma = 1-current_dma;
+
+    if (next_row == 0) {
+        frameCounter++;
+    }
+    if (next_row < vga_timing.v.visible_area) {
+        uint16_t xpos = (next_row & 1) * half_width;
+        uint8_t tile_row = (next_row >> 1) & 7;
+        uint8_t colors[] = {0,63};
+        int x;
+        for (int tile = 0; tile < half_width >> 3; tile++) {
+            colors[1] = tile&63;
+
+            uint8_t c = font[message[tile & 7]][tile_row];
+            fb[xpos++] =  colors[c>>7];
+            c = c << 1;
+            fb[xpos++] =  colors[c>>7];
+            c = c << 1;
+            fb[xpos++] =  colors[c>>7];
+            c = c << 1;
+            fb[xpos++] =  colors[c>>7];
+            c = c << 1;
+            fb[xpos++] =  colors[c>>7];
+            c = c << 1;
+            fb[xpos++] =  colors[c>>7];
+            c = c << 1;
+            fb[xpos++] =  colors[c>>7];
+            c = c << 1;
+            fb[xpos++] =  colors[c>>7];
+            c = c << 1;
+        }
+    }
 }
 
 void init_frame_buffers() {
@@ -169,38 +208,4 @@ int main() {
     while (true) {
         // Here be sprites and stuff
     }
-
-
-/*
-    uint32_t framebuffer_size = 400*300;
-    uint8_t framebuffer[framebuffer_size];
-    for (int i = 0; i < framebuffer_size; i++) {
-        uint8_t rgb = i & 63;
-        framebuffer[i] = rgb;
-    }
-
-    uint32_t vx = vga_timing.h.visible_area / 4;
-    uint32_t cx = columns / 4;
-    uint32_t *framebuffer32 = (uint32_t*)framebuffer;
-
-    uint32_t fbpos = 0;
-    while (true) {
-        for (uint16_t y = 0 ; y < vga_timing.v.visible_area; y++) {
-            fbpos = y>>1;
-            for (uint16_t x = 0; x < vx; x++) {
-                pio_sm_put_blocking(pio, sm, framebuffer32[fbpos]);
-                fbpos++;
-            }
-            for (uint16_t x = vx; x < cx; x++) {
-                pio_sm_put_blocking(pio, sm, row[0][x]);
-            }
-        }
-        for (uint16_t y = vga_timing.v.visible_area ; y < rows; y++) {
-            uint8_t row_type = row_def[y];
-            uint32_t *sync = row[row_type];
-            for (uint16_t x = 0; x < cx; x++) {
-                pio_sm_put_blocking(pio, sm, sync[x]);
-            }
-        }
-    }*/
 }

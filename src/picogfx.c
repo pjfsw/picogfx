@@ -16,10 +16,11 @@
 #define SCRH 512
 #define NUMBER_OF_SPRITES 8
 #define SPRITE_WIDTH 16
-#define CHARS_PER_LINE 51
+#define CHARS_PER_LINE 52
 #define FRAMEBUFFER_OFFSET 112
 #define V_VISIBLE_AREA 600
 #define LAST_VISIBLE_ROW 596
+#define SPRITE_RIGHT_EDGE 416
 #define SCALE 2
 
 typedef struct {
@@ -55,6 +56,7 @@ uint8_t screen[SCRW*SCRH];
 uint8_t colorMem[SCRW*SCRH];
 uint16_t spriteX[NUMBER_OF_SPRITES];
 uint16_t spriteY[NUMBER_OF_SPRITES];
+uint8_t spriteHeight[NUMBER_OF_SPRITES];
 uint16_t palettes[256];
 
 uint8_t spritePos[NUMBER_OF_SPRITES];
@@ -67,8 +69,8 @@ const int VSYNC_BUFFER = 4;
 
 uint8_t frameCounter = 0;
 uint8_t palette[] = {3, 12, 48, 63};
-uint16_t sinTable[256];
-uint16_t cosTable[256];
+int16_t sinTable[256];
+int16_t cosTable[256];
 
 uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
@@ -119,15 +121,15 @@ int isDebug() {
 static inline void draw_sprites(uint8_t *fb) {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         int16_t spritePos = pixel_row-spriteY[i];
-        if (spritePos < 0 || spritePos > 15) {
+        if (spritePos < 0 || spritePos > spriteHeight[i]) {
             continue;
         }
         spritePos = spritePos << 4;
 
         int n = SPRITE_WIDTH;
         uint16_t xPos = spriteX[i];
-        if (xPos > vga_timing.h.visible_area-SPRITE_WIDTH) {
-            n = vga_timing.h.visible_area-xPos;
+        if (xPos > SPRITE_RIGHT_EDGE) {
+            n = SPRITE_RIGHT_EDGE-xPos;
         }
 
         for (int x = 0; x < n; x++) {
@@ -182,7 +184,7 @@ void dma_handler() {
     uint8_t *fb = &framebuffer[framebuffer_index[next_row]][FRAMEBUFFER_OFFSET];
     dma_channel_set_read_addr(dma_chan[current_dma], fb, false);
     current_dma = 1-current_dma;
-    fb-=8; // To allow for horisontal scrolling
+    fb-=16; // To allow for horisontal scrolling
 
     if (next_row == 0) {
         frameCounter++;
@@ -192,7 +194,7 @@ void dma_handler() {
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
             //spriteX[i]++;
             spritePos[i]++;
-            spriteY[i] = 276; // sinTable[spritePos[i]];
+            spriteY[i] = sinTable[spritePos[i]];
             spriteX[i] = cosTable[spritePos[i]];
         }
     }
@@ -237,12 +239,13 @@ void init_frame_buffers() {
 
 void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
-        sinTable[i] = 140 + 140 * sin(i * M_PI / 128);
-        cosTable[i] = 193 + 192 * cos(i * M_PI / 128);
+        sinTable[i] = 150 + 170 * sin(i * M_PI / 128);
+        cosTable[i] = 208 + 208 * cos(i * M_PI / 128);
     }
     const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         spritePos[i] = i << 2;
+        spriteHeight[i] = 24;
     }
     for (int i = 0; i < 256; i++) {
         palettes[i] = ((i&63)<<8) | (i>>2);

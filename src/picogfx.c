@@ -41,6 +41,7 @@ uint8_t framebuffer_index[628];
 // We probably[tm] won't use higher resolutions than 800x600
 uint8_t framebuffer[5][1056];
 uint16_t scrollY;
+uint8_t scrollPos;
 uint16_t spriteX[NUMBER_OF_SPRITES];
 uint16_t spriteY[NUMBER_OF_SPRITES];
 uint8_t spritePos[NUMBER_OF_SPRITES];
@@ -195,7 +196,8 @@ void dma_handler() {
 
     if (next_row == 0) {
         frameCounter++;
-        scrollY++;
+        scrollPos++;
+        scrollY = sinTable[scrollPos++];
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
             //spriteX[i]++;
             spritePos[i]++;

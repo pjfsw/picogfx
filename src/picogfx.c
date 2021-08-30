@@ -18,6 +18,8 @@
 #define SPRITE_WIDTH 16
 #define CHARS_PER_LINE 51
 #define FRAMEBUFFER_OFFSET 112
+#define V_VISIBLE_AREA 600
+#define LAST_VISIBLE_ROW 596
 #define SCALE 2
 
 typedef struct {
@@ -34,7 +36,6 @@ typedef struct {
     float pixel_clock;
 } HVTiming;
 
-uint16_t last_visible_row = 0;
 HVTiming vga_timing;
 int dma_chan[2];
 uint16_t current_dma;
@@ -46,12 +47,15 @@ uint8_t framebuffer[5][2048];
 uint16_t scrollY;
 uint16_t scrollX;
 uint8_t scrollPos;
+uint8_t colors[] = {0,0};
+uint16_t *color16;
+
 // VRAM
-uint8_t vram[131072];
-uint8_t *screen;
-uint8_t *colorMem;
-uint16_t *spriteX;
-uint16_t *spriteY;
+uint8_t screen[SCRW*SCRH];
+uint8_t colorMem[SCRW*SCRH];
+uint16_t spriteX[NUMBER_OF_SPRITES];
+uint16_t spriteY[NUMBER_OF_SPRITES];
+uint16_t palettes[256];
 
 uint8_t spritePos[NUMBER_OF_SPRITES];
 
@@ -76,13 +80,12 @@ void set_800_600(HVTiming *vga_timing) {
     vga_timing->h.sync_pulse = 128/SCALE;
     vga_timing->h.back_porch = 88/SCALE;
     vga_timing->h.length = get_length(&vga_timing->h);
-    vga_timing->v.visible_area = 600;
+    vga_timing->v.visible_area = V_VISIBLE_AREA;
     vga_timing->v.front_porch = 1;
     vga_timing->v.sync_pulse = 4;
     vga_timing->v.back_porch = 23;
     vga_timing->v.length = get_length(&vga_timing->v);
     vga_timing->pixel_clock = 40000000.0/(float)SCALE;
-    last_visible_row = vga_timing->v.visible_area & 0xfff0; // Don't want to show half a tile row
 }
 
 
@@ -138,27 +141,33 @@ static inline void draw_sprites(uint8_t *fb) {
 }
 
 static inline void draw_tiles(uint8_t *fb) {
-    uint16_t scroll_row = (pixel_row + scrollY) & 0x1ff;
-    uint16_t offset = (scroll_row << 6) + ((scrollX & 0x1ff) >> 3);
-    uint8_t *scrPos = &screen[offset];
-    uint8_t *colorPos = &colorMem[offset];
-    uint8_t colors[] = {0,63,31,17};
-    uint8_t tile;
-    uint8_t shift = 0;
+    uint16_t yOffset = ((pixel_row + scrollY) & 0x1ff) << 6;
+    uint16_t xOffset = ((scrollX & 0x1ff) >> 3);
+    uint8_t *scrPos = &screen[yOffset];
+    uint8_t *colorPos = &colorMem[yOffset];
     uint8_t c;
     uint16_t xpos = (7-scrollX) & 7;
 
-    for (int tile = 0; tile < CHARS_PER_LINE; tile++) {
-        colors[1] = colorPos[tile] & 63;
-        uint8_t c = scrPos[tile];
-        fb[xpos++] =  colors[c>>7];
-        fb[xpos++] =  colors[(c>>6)&1];
-        fb[xpos++] =  colors[(c>>5)&1];
-        fb[xpos++] =  colors[(c>>4)&1];
-        fb[xpos++] =  colors[(c>>3)&1];
-        fb[xpos++] =  colors[(c>>2)&1];
-        fb[xpos++] =  colors[(c>>1)&1];
-        fb[xpos++] =  colors[c&1];
+    for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
+        *color16 = palettes[colorPos[xOffset]] & 0x3F3F;
+        c = scrPos[xOffset];
+        fb[xpos+7] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+6] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+5] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+4] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+3] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+2] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+1] = colors[c&1];
+        c = c >> 1;
+        fb[xpos] = colors[c&1];
+        xpos+=8;
+        xOffset = (xOffset + 1) & 63;
     }
 }
 
@@ -187,12 +196,10 @@ void dma_handler() {
             spriteX[i] = cosTable[spritePos[i]];
         }
     }
-    if (next_row < last_visible_row) {
-        if ((next_row & 1) == 0) {
+    if (next_row < LAST_VISIBLE_ROW) {
+        if (!(next_row & 1)) {
             draw_tiles(fb);
             draw_sprites(fb);
-//        } else {
-            // Fill entire frame buffer with tiles on even lines
         }
     }
 }
@@ -210,11 +217,11 @@ void init_frame_buffers() {
     init_row((uint32_t*)framebuffer[VSYNC_BUFFER], &vga_timing.h, vsync_on_mask);
 
     int row = 0;
-    for (int i = 0; i < last_visible_row; i++) {
+    for (int i = 0; i < LAST_VISIBLE_ROW; i++) {
         framebuffer_index[row] = (row >> 1) % 2;
         row++;
     }
-    for (int i = last_visible_row; i < vga_timing.v.visible_area; i++) {
+    for (int i = LAST_VISIBLE_ROW; i < vga_timing.v.visible_area; i++) {
         framebuffer_index[row++] = BLACK_BUFFER;
     }
     for (int i = 0; i < vga_timing.v.front_porch; i++) {
@@ -237,14 +244,17 @@ void init_app_stuff() {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         spritePos[i] = i << 2;
     }
+    for (int i = 0; i < 256; i++) {
+        palettes[i] = ((i&63)<<8) | (i>>2);
+    }
     uint8_t character = 32;
-    uint8_t color = 0;
+    uint8_t palette = 0;
     for (int y = 0; y < 64; y++) {
         for (int x = 0; x < 64; x++) {
             for (int f = 0; f < 8; f++) {
                 int pos = (y*8+f)*SCRW+x;
                 screen[pos] = font[character][f];
-                colorMem[pos] = (color++)&63;
+                colorMem[pos] = palette++;
             }
             character = character + 1;
             if (character > 128) {
@@ -256,13 +266,11 @@ void init_app_stuff() {
 }
 
 void init_vram() {
-    screen = &vram[0];
-    colorMem = &vram[SCRW*SCRH];
-    spriteX = (uint16_t*)&vram[2*SCRW*SCRH];
-    spriteY = (uint16_t*)&vram[2*SCRW*SCRH+2*NUMBER_OF_SPRITES];
+    color16 = (uint16_t*)colors;
 }
+
 int main() {
-    set_sys_clock_khz(240000, true);
+    set_sys_clock_khz(270000, true);
     init_vram();
 
     int debug = isDebug();

@@ -12,12 +12,13 @@
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
 #define DEBUG_PIN 7
-#define SCRW 128
-#define SCRH 64
+#define SCRW 64
+#define SCRH 512
 #define NUMBER_OF_SPRITES 8
 #define SPRITE_WIDTH 16
-#define CHARS_PER_LINE 50
+#define CHARS_PER_LINE 51
 #define FRAMEBUFFER_OFFSET 112
+#define SCALE 2
 
 typedef struct {
     uint16_t visible_area;
@@ -43,9 +44,15 @@ uint8_t framebuffer_index[628];
 // We probably[tm] won't use higher resolutions than 800x600
 uint8_t framebuffer[5][2048];
 uint16_t scrollY;
+uint16_t scrollX;
 uint8_t scrollPos;
-uint16_t spriteX[NUMBER_OF_SPRITES];
-uint16_t spriteY[NUMBER_OF_SPRITES];
+// VRAM
+uint8_t vram[131072];
+uint8_t *screen;
+uint8_t *colorMem;
+uint16_t *spriteX;
+uint16_t *spriteY;
+
 uint8_t spritePos[NUMBER_OF_SPRITES];
 
 const int PIXEL_BUFFER_0 = 0;
@@ -54,8 +61,6 @@ const int BLACK_BUFFER = 2; // Special buffer :)
 const int VBLANK_BUFFER = 3;
 const int VSYNC_BUFFER = 4;
 
-uint8_t screen[SCRW * SCRH];
-uint8_t colorMem[SCRW * SCRH];
 uint8_t frameCounter = 0;
 uint8_t palette[] = {3, 12, 48, 63};
 uint16_t sinTable[256];
@@ -65,18 +70,18 @@ uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
 }
 
-void set_800_600(HVTiming *vga_timing, int scale) {
-    vga_timing->h.visible_area = 800/scale;
-    vga_timing->h.front_porch = 40/scale;
-    vga_timing->h.sync_pulse = 128/scale;
-    vga_timing->h.back_porch = 88/scale;
+void set_800_600(HVTiming *vga_timing) {
+    vga_timing->h.visible_area = 800/SCALE;
+    vga_timing->h.front_porch = 40/SCALE;
+    vga_timing->h.sync_pulse = 128/SCALE;
+    vga_timing->h.back_porch = 88/SCALE;
     vga_timing->h.length = get_length(&vga_timing->h);
     vga_timing->v.visible_area = 600;
     vga_timing->v.front_porch = 1;
     vga_timing->v.sync_pulse = 4;
     vga_timing->v.back_porch = 23;
     vga_timing->v.length = get_length(&vga_timing->v);
-    vga_timing->pixel_clock = 40000000.0/(float)scale;
+    vga_timing->pixel_clock = 40000000.0/(float)SCALE;
     last_visible_row = vga_timing->v.visible_area & 0xfff0; // Don't want to show half a tile row
 }
 
@@ -134,34 +139,26 @@ static inline void draw_sprites(uint8_t *fb) {
 
 static inline void draw_tiles(uint8_t *fb) {
     uint16_t scroll_row = (pixel_row + scrollY) & 0x1ff;
-    uint8_t tile_row = scroll_row & 7;
-    uint16_t offset = ((scroll_row >> 3) << 6);
+    uint16_t offset = (scroll_row << 6) + ((scrollX & 0x1ff) >> 3);
     uint8_t *scrPos = &screen[offset];
     uint8_t *colorPos = &colorMem[offset];
     uint8_t colors[] = {0,63,31,17};
     uint8_t tile;
     uint8_t shift = 0;
     uint8_t c;
-    uint16_t xpos = 0;
+    uint16_t xpos = (7-scrollX) & 7;
 
     for (int tile = 0; tile < CHARS_PER_LINE; tile++) {
         colors[1] = colorPos[tile] & 63;
-        uint8_t c = font[scrPos[tile]][tile_row];
+        uint8_t c = scrPos[tile];
         fb[xpos++] =  colors[c>>7];
-        c = c << 1;
-        fb[xpos++] =  colors[c>>7];
-        c = c << 1;
-        fb[xpos++] =  colors[c>>7];
-        c = c << 1;
-        fb[xpos++] =  colors[c>>7];
-        c = c << 1;
-        fb[xpos++] =  colors[c>>7];
-        c = c << 1;
-        fb[xpos++] =  colors[c>>7];
-        c = c << 1;
-        fb[xpos++] =  colors[c>>7];
-        c = c << 1;
-        fb[xpos++] =  colors[c>>7];
+        fb[xpos++] =  colors[(c>>6)&1];
+        fb[xpos++] =  colors[(c>>5)&1];
+        fb[xpos++] =  colors[(c>>4)&1];
+        fb[xpos++] =  colors[(c>>3)&1];
+        fb[xpos++] =  colors[(c>>2)&1];
+        fb[xpos++] =  colors[(c>>1)&1];
+        fb[xpos++] =  colors[c&1];
     }
 }
 
@@ -176,11 +173,13 @@ void dma_handler() {
     uint8_t *fb = &framebuffer[framebuffer_index[next_row]][FRAMEBUFFER_OFFSET];
     dma_channel_set_read_addr(dma_chan[current_dma], fb, false);
     current_dma = 1-current_dma;
+    fb-=8; // To allow for horisontal scrolling
 
     if (next_row == 0) {
         frameCounter++;
         scrollPos++;
         scrollY = sinTable[scrollPos++];
+        scrollX++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
             //spriteX[i]++;
             spritePos[i]++;
@@ -238,21 +237,37 @@ void init_app_stuff() {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         spritePos[i] = i << 2;
     }
-    for (int i = 0; i < SCRW*SCRH; i++) {
-        screen[i] = i & 255;
-        colorMem[i] = i & 63;
+    uint8_t character = 32;
+    uint8_t color = 0;
+    for (int y = 0; y < 64; y++) {
+        for (int x = 0; x < 64; x++) {
+            for (int f = 0; f < 8; f++) {
+                int pos = (y*8+f)*SCRW+x;
+                screen[pos] = font[character][f];
+                colorMem[pos] = (color++)&63;
+            }
+            character = character + 1;
+            if (character > 128) {
+                character = 32;
+            }
+        }
     }
 
 }
 
+void init_vram() {
+    screen = &vram[0];
+    colorMem = &vram[SCRW*SCRH];
+    spriteX = (uint16_t*)&vram[2*SCRW*SCRH];
+    spriteY = (uint16_t*)&vram[2*SCRW*SCRH+2*NUMBER_OF_SPRITES];
+}
 int main() {
     set_sys_clock_khz(240000, true);
-    //set_sys_clock_khz(140000, true);
-//    clock_configure(clk_sys, 0, 0, 0, 140000000);
-    const int scale = 2;
+    init_vram();
+
     int debug = isDebug();
 
-    set_800_600(&vga_timing, scale);
+    set_800_600(&vga_timing);
     init_frame_buffers();
 
     PIO pio = pio0;

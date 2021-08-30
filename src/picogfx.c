@@ -12,9 +12,11 @@
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
 #define DEBUG_PIN 7
-#define SCRW 64
+#define SCRW 128
 #define SCRH 64
 #define NUMBER_OF_SPRITES 16
+#define SPRITE_WIDTH 16
+#define CHARS_PER_LINE 50
 
 typedef struct {
     uint16_t visible_area;
@@ -31,7 +33,6 @@ typedef struct {
 } HVTiming;
 
 uint16_t last_visible_row = 0;
-uint8_t chars_per_line;
 HVTiming vga_timing;
 int dma_chan[2];
 uint16_t current_dma;
@@ -41,29 +42,11 @@ uint8_t framebuffer_index[628];
 // We probably[tm] won't use higher resolutions than 800x600
 uint8_t framebuffer[5][1056];
 uint16_t scrollY;
+uint16_t scrollX;
 uint8_t scrollPos;
 uint16_t spriteX[NUMBER_OF_SPRITES];
 uint16_t spriteY[NUMBER_OF_SPRITES];
 uint8_t spritePos[NUMBER_OF_SPRITES];
-/*uint8_t spriteData[] =
-{
-    0,63,63,63,63,63,63,0,   3,3,3,3,3,3,3,3,
-    63,63,63,63,63,63,63,63, 3,3,3,3,3,3,3,3,
-    63, 1, 1,63,63, 1, 1,63, 3,3,3,3,3,3,3,3,
-    63,63,63,63,63,63,63,63, 3,3,3,3,3,3,3,3,
-    63,63,63,63,63,63,63,63, 3,3,3,3,3,3,3,3,
-    63, 1,63,63,63,63, 1,63, 3,3,3,3,3,3,3,3,
-    63,63, 1, 1, 1, 1,63,63, 3,3,3,3,3,3,3,3,
-     0,63,63,63,63,63,63,0,  3,3,3,3,3,3,3,3,
-     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-     7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,
-};*/
 
 const int PIXEL_BUFFER_0 = 0;
 const int PIXEL_BUFFER_1 = 1;
@@ -94,7 +77,6 @@ void set_800_600(HVTiming *vga_timing, int scale) {
     vga_timing->v.back_porch = 23;
     vga_timing->v.length = get_length(&vga_timing->v);
     vga_timing->pixel_clock = 40000000.0/(float)scale;
-    chars_per_line = vga_timing->h.visible_area >> 3;
     last_visible_row = vga_timing->v.visible_area & 0xfff0; // Don't want to show half a tile row
 }
 
@@ -134,9 +116,9 @@ static inline void draw_sprites(uint8_t *fb) {
         }
         spritePos = spritePos << 4;
 
-        int n = 16;
+        int n = SPRITE_WIDTH;
         uint16_t xPos = spriteX[i];
-        if (xPos > vga_timing.h.visible_area-16) {
+        if (xPos > vga_timing.h.visible_area-SPRITE_WIDTH) {
             n = vga_timing.h.visible_area-xPos;
         }
 
@@ -160,7 +142,7 @@ static inline void draw_tiles(uint8_t *fb) {
     uint8_t shift = 0;
     uint8_t c;
     uint16_t xpos = 0;
-    for (int tile = 0; tile < chars_per_line; tile++) {
+    for (int tile = 0; tile < CHARS_PER_LINE; tile++) {
         colors[1] = colorPos[tile] & 63;
         uint8_t c = font[scrPos[tile]][tile_row];
         fb[xpos++] =  colors[c>>7];
@@ -206,12 +188,11 @@ void dma_handler() {
         }
     }
     if (next_row < last_visible_row) {
-        if (next_row & 1) {
-            // Draw sprites on top of tiles
-            draw_sprites(fb);
-        } else {
-            // Fill entire frame buffer with tiles on even lines
+        if ((next_row & 1) == 0) {
             draw_tiles(fb);
+            draw_sprites(fb);
+//        } else {
+            // Fill entire frame buffer with tiles on even lines
         }
     }
 }
@@ -250,7 +231,7 @@ void init_frame_buffers() {
 void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
         sinTable[i] = 140 + 140 * sin(i * M_PI / 128);
-        cosTable[i] = 192 + 192 * cos(i * M_PI / 128);
+        cosTable[i] = 193 + 192 * cos(i * M_PI / 128);
     }
     const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {

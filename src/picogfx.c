@@ -14,9 +14,10 @@
 #define DEBUG_PIN 7
 #define SCRW 128
 #define SCRH 64
-#define NUMBER_OF_SPRITES 16
+#define NUMBER_OF_SPRITES 8
 #define SPRITE_WIDTH 16
 #define CHARS_PER_LINE 50
+#define FRAMEBUFFER_OFFSET 112
 
 typedef struct {
     uint16_t visible_area;
@@ -40,9 +41,8 @@ uint16_t next_row;
 uint16_t pixel_row;
 uint8_t framebuffer_index[628];
 // We probably[tm] won't use higher resolutions than 800x600
-uint8_t framebuffer[5][1056];
+uint8_t framebuffer[5][2048];
 uint16_t scrollY;
-uint16_t scrollX;
 uint8_t scrollPos;
 uint16_t spriteX[NUMBER_OF_SPRITES];
 uint16_t spriteY[NUMBER_OF_SPRITES];
@@ -82,7 +82,7 @@ void set_800_600(HVTiming *vga_timing, int scale) {
 
 
 void init_row(uint32_t row[], Timing *t, uint8_t vsync_mask) {
-    uint16_t pos = 0;
+    uint16_t pos = FRAMEBUFFER_OFFSET/4;
     uint32_t vsync_mask32 = vsync_mask | (vsync_mask << 8) | (vsync_mask << 16) | (vsync_mask << 24);
 
     uint8_t hsync_mask = 1 << HSYNC_BIT;
@@ -135,13 +135,15 @@ static inline void draw_sprites(uint8_t *fb) {
 static inline void draw_tiles(uint8_t *fb) {
     uint16_t scroll_row = (pixel_row + scrollY) & 0x1ff;
     uint8_t tile_row = scroll_row & 7;
-    uint8_t *scrPos = &screen[(scroll_row >> 3) << 6];
-    uint8_t *colorPos = &colorMem[(scroll_row >> 3) << 6];
-    uint8_t colors[] = {0,63};
+    uint16_t offset = ((scroll_row >> 3) << 6);
+    uint8_t *scrPos = &screen[offset];
+    uint8_t *colorPos = &colorMem[offset];
+    uint8_t colors[] = {0,63,31,17};
     uint8_t tile;
     uint8_t shift = 0;
     uint8_t c;
     uint16_t xpos = 0;
+
     for (int tile = 0; tile < CHARS_PER_LINE; tile++) {
         colors[1] = colorPos[tile] & 63;
         uint8_t c = font[scrPos[tile]][tile_row];
@@ -160,7 +162,6 @@ static inline void draw_tiles(uint8_t *fb) {
         fb[xpos++] =  colors[c>>7];
         c = c << 1;
         fb[xpos++] =  colors[c>>7];
-        c = c << 1;
     }
 }
 
@@ -172,7 +173,7 @@ void dma_handler() {
     next_row = (next_row + 1) % vga_timing.v.length;
     pixel_row = next_row >> 1;
 
-    uint8_t *fb = framebuffer[framebuffer_index[next_row]];
+    uint8_t *fb = &framebuffer[framebuffer_index[next_row]][FRAMEBUFFER_OFFSET];
     dma_channel_set_read_addr(dma_chan[current_dma], fb, false);
     current_dma = 1-current_dma;
 
@@ -183,7 +184,7 @@ void dma_handler() {
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
             //spriteX[i]++;
             spritePos[i]++;
-            spriteY[i] = sinTable[spritePos[i]];
+            spriteY[i] = 276; // sinTable[spritePos[i]];
             spriteX[i] = cosTable[spritePos[i]];
         }
     }
@@ -245,7 +246,7 @@ void init_app_stuff() {
 }
 
 int main() {
-    set_sys_clock_khz(200000, true);
+    set_sys_clock_khz(240000, true);
     //set_sys_clock_khz(140000, true);
 //    clock_configure(clk_sys, 0, 0, 0, 140000000);
     const int scale = 2;
@@ -275,7 +276,7 @@ int main() {
         channel_config_set_read_increment(&c, true);
         channel_config_set_dreq(&c, DREQ_PIO0_TX0);
         channel_config_set_chain_to(&c, dma_chan[1-i]);
-        dma_channel_configure(dma_chan[i], &c, &pio0_hw->txf[0], framebuffer[framebuffer_index[i]], columns/4, false);
+        dma_channel_configure(dma_chan[i], &c, &pio0_hw->txf[0], &framebuffer[framebuffer_index[i]][FRAMEBUFFER_OFFSET], columns/4, false);
         dma_channel_set_irq0_enabled(dma_chan[i], true);
         irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
         irq_set_enabled(DMA_IRQ_0, true);

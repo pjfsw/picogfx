@@ -8,8 +8,6 @@
 #include "font.h"
 #include "spritedata.h"
 #include "math.h"
-#include "core2.h"
-#include "pico/multicore.h"
 
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
@@ -342,10 +340,6 @@ int main() {
     next_row = 1;
     current_dma = 0;
     dma_start_channel_mask(1u << dma_chan[0]);
-
-    multicore_launch_core1(core2);
     while (true) {
-        uint32_t g = multicore_fifo_pop_blocking();
-        spritePos[0] = g;
     }
 }

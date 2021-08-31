@@ -15,12 +15,10 @@ pico_generate_pio_header(picogfx ${CMAKE_CURRENT_LIST_DIR}/src/vga.pio)
 
 target_sources(picogfx PRIVATE
     src/picogfx.c
-    src/core2.c
     )
 
 target_link_libraries(picogfx PRIVATE
     pico_stdlib
-    pico_multicore
     hardware_pio
     hardware_irq
     hardware_dma

@@ -181,7 +181,6 @@ static inline void pixel_dma_handler() {
     dma_channel_set_read_addr(dma_chan[current_dma], fb+8, false);
 
     if (next_row&1) {
-        // Only draw on one line
         return;
     }
     if (next_row == 0) {
@@ -286,6 +285,14 @@ void init_app_stuff() {
 
 }
 
+void gpio_irq_handler(uint gpio, uint32_t events) {
+    gpio_acknowledge_irq(gpio, events);
+    uint32_t v = gpio_get_all();
+    scrollPos = 0;
+    scrollX = 0;
+}
+
+
 void init_vram() {
     color16 = (uint16_t*)colors;
 }
@@ -340,6 +347,8 @@ int main() {
     next_row = 1;
     current_dma = 0;
     dma_start_channel_mask(1u << dma_chan[0]);
+    const int positiveEdge = 1 << 3;
+    gpio_set_irq_enabled_with_callback(DEBUG_PIN, positiveEdge, true, gpio_irq_handler);
     while (true) {
     }
 }

@@ -48,19 +48,24 @@ uint8_t syncbuffer[2][256];
 uint8_t framebuffer_index[ROWS_PER_FRAME];
 uint8_t syncbuffer_index[ROWS_PER_FRAME];
 
-uint16_t scrollY;
-uint16_t scrollX;
 uint8_t scrollPos;
 uint8_t colors[] = {0,0};
 uint16_t *color16;
 
+typedef struct {
+    uint8_t screen[SCRW*SCRH];
+    uint8_t colorMem[SCRW*SCRH];
+    uint16_t spriteX[NUMBER_OF_SPRITES];
+    uint16_t spriteY[NUMBER_OF_SPRITES];
+    uint8_t spriteHeight[NUMBER_OF_SPRITES];
+    uint16_t palettes[256];
+    uint16_t scrollY;
+    uint16_t scrollX;
+} Vram;
+
+Vram vram;
+
 // VRAM
-uint8_t screen[SCRW*SCRH];
-uint8_t colorMem[SCRW*SCRH];
-uint16_t spriteX[NUMBER_OF_SPRITES];
-uint16_t spriteY[NUMBER_OF_SPRITES];
-uint8_t spriteHeight[NUMBER_OF_SPRITES];
-uint16_t palettes[256];
 
 uint8_t spritePos[NUMBER_OF_SPRITES];
 
@@ -118,14 +123,14 @@ int isDebug() {
 
 static inline void draw_sprites(uint8_t *fb) {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
-        int16_t spritePos = pixel_row-spriteY[i];
-        if (spritePos < 0 || spritePos > spriteHeight[i]) {
+        int16_t spritePos = pixel_row-vram.spriteY[i];
+        if (spritePos < 0 || spritePos > vram.spriteHeight[i]) {
             continue;
         }
         spritePos = spritePos << 4;
 
         int n = SPRITE_WIDTH;
-        uint16_t xPos = spriteX[i];
+        uint16_t xPos = vram.spriteX[i];
         if (xPos > SPRITE_RIGHT_EDGE) {
             n = SPRITE_RIGHT_EDGE-xPos;
         }
@@ -141,15 +146,15 @@ static inline void draw_sprites(uint8_t *fb) {
 }
 
 static inline void draw_tiles(uint8_t *fb) {
-    uint16_t yOffset = ((pixel_row + scrollY) & 0x1ff) << 6;
-    uint16_t xOffset = ((scrollX & 0x1ff) >> 3);
-    uint8_t *scrPos = &screen[yOffset];
-    uint8_t *colorPos = &colorMem[yOffset];
+    uint16_t yOffset = ((pixel_row + vram.scrollY) & 0x1ff) << 6;
+    uint16_t xOffset = ((vram.scrollX & 0x1ff) >> 3);
+    uint8_t *scrPos = &vram.screen[yOffset];
+    uint8_t *colorPos = &vram.colorMem[yOffset];
     uint8_t c;
-    uint16_t xpos = (7-scrollX) & 7;
+    uint16_t xpos = (7-vram.scrollX) & 7;
 
     for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
-        *color16 = palettes[colorPos[xOffset]] & 0x3F3F;
+        *color16 = vram.palettes[colorPos[xOffset]] & 0x3F3F;
         c = scrPos[xOffset];
         fb[xpos+7] = colors[c&1];
         c = c >> 1;
@@ -186,13 +191,13 @@ static inline void pixel_dma_handler() {
     if (next_row == 0) {
         frameCounter++;
         scrollPos++;
-        scrollY = sinTable[scrollPos++];
-        scrollX++;
+        vram.scrollY = sinTable[scrollPos++];
+        vram.scrollX++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
             //spriteX[i]++;
             spritePos[i]++;
-            spriteY[i] = sinTable[spritePos[i]];
-            spriteX[i] = cosTable[spritePos[i]];
+            vram.spriteY[i] = sinTable[spritePos[i]];
+            vram.spriteX[i] = cosTable[spritePos[i]];
         }
     }
     if (next_row < LAST_VISIBLE_ROW) {
@@ -262,10 +267,10 @@ void init_app_stuff() {
     const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         spritePos[i] = i << 2;
-        spriteHeight[i] = 24;
+        vram.spriteHeight[i] = 24;
     }
     for (int i = 0; i < 256; i++) {
-        palettes[i] = ((i&63)<<8) | (i>>2);
+        vram.palettes[i] = ((i&63)<<8) | (i>>2);
     }
     uint8_t character = 32;
     uint8_t palette = 0;
@@ -273,8 +278,8 @@ void init_app_stuff() {
         for (int x = 0; x < 64; x++) {
             for (int f = 0; f < 8; f++) {
                 int pos = (y*8+f)*SCRW+x;
-                screen[pos] = font[character][f];
-                colorMem[pos] = palette++;
+                vram.screen[pos] = font[character][f];
+                vram.colorMem[pos] = palette++;
             }
             character = character + 1;
             if (character > 128) {
@@ -289,7 +294,7 @@ void gpio_irq_handler(uint gpio, uint32_t events) {
     gpio_acknowledge_irq(gpio, events);
     uint32_t v = gpio_get_all();
     scrollPos = 0;
-    scrollX = 0;
+    vram.scrollX = 0;
 }
 
 

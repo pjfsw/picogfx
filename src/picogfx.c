@@ -64,6 +64,10 @@ typedef struct {
 } Vram;
 
 Vram vram;
+uint8_t dummy[131702-sizeof(Vram)];
+uint8_t *vramBytes = (uint8_t*)&vram;
+
+uint32_t nextPtr = 0;
 
 // VRAM
 
@@ -191,8 +195,10 @@ static inline void pixel_dma_handler() {
     if (next_row == 0) {
         frameCounter++;
         scrollPos++;
-        vram.scrollY = sinTable[scrollPos++];
-        vram.scrollX++;
+        vram.scrollX = 0;
+        vram.scrollY = 0;
+        //vram.scrollY = sinTable[scrollPos++];
+        //vram.scrollX++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
             //spriteX[i]++;
             spritePos[i]++;
@@ -293,8 +299,8 @@ void init_app_stuff() {
 void gpio_irq_handler(uint gpio, uint32_t events) {
     gpio_acknowledge_irq(gpio, events);
     uint32_t v = gpio_get_all();
-    scrollPos = 0;
-    vram.scrollX = 0;
+    vramBytes[nextPtr] = v & 255;
+    nextPtr = (nextPtr + 1) % 131072;
 }
 
 

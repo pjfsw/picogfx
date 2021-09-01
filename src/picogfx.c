@@ -17,11 +17,14 @@
 #define NUMBER_OF_SPRITES 8
 #define SPRITE_WIDTH 16
 #define CHARS_PER_LINE 52
+#define HIRES_CHARS_PER_LINE 102
 #define V_VISIBLE_AREA 600
 #define LAST_VISIBLE_ROW 596
 #define SPRITE_RIGHT_EDGE 416
 #define ROWS_PER_FRAME 628
-#define SCALE 2
+#define FRAME_BUFFER_SIZE 1024
+#define VGA_BASE_PIN 8
+
 
 typedef struct {
     uint16_t visible_area;
@@ -37,14 +40,44 @@ typedef struct {
     float pixel_clock;
 } HVTiming;
 
+Timing VGA_TIMING_40MHZ = {
+    .visible_area = 800,
+    .front_porch = 40,
+    .sync_pulse = 128,
+    .back_porch = 88
+};
+
+Timing VGA_TIMING_20MHZ = {
+    .visible_area = 400,
+    .front_porch = 20,
+    .sync_pulse = 64,
+    .back_porch = 44
+};
+
+Timing VGA_VERTICAL_TIMING = {
+     .visible_area = 600,
+     .front_porch = 1,
+     .sync_pulse = 4,
+     .back_porch = 23
+};
+
+typedef struct {
+    PIO pio;
+    uint sm;
+    uint offset;
+} PioConf;
+
+uint8_t sync_buffer_offset = 0; // 0 = 800x600, 2 = 400x600
+PioConf pio_conf;
+
 HVTiming vga_timing;
 int dma_chan[4];
 uint16_t current_dma;
 uint16_t next_row;
 uint16_t pixel_row;
 // We probably[tm] won't use higher resolutions than 800x600
-uint8_t framebuffer[4][512];
-uint8_t syncbuffer[2][256];
+uint8_t framebuffer[4][FRAME_BUFFER_SIZE];
+uint8_t syncbuffer[4][512];
 uint8_t framebuffer_index[ROWS_PER_FRAME];
 uint8_t syncbuffer_index[ROWS_PER_FRAME];
 
@@ -63,13 +96,13 @@ typedef struct {
     uint16_t scrollY;
     uint16_t scrollX;
     uint8_t font[2048];
-
 } Vram;
+uint8_t last_mode = 0;
 
 Vram vram;
 uint8_t dummy[131702-sizeof(Vram)];
 uint8_t *vramBytes = (uint8_t*)&vram;
-
+bool debugMode;
 uint32_t nextPtr = 0;
 
 // VRAM
@@ -80,10 +113,12 @@ const int PIXEL_BUFFER_0 = 0;
 const int PIXEL_BUFFER_1 = 1;
 const int PIXEL_BUFFER_PORCH = 2;
 const int PIXEL_BUFFER_SYNC = 3;
-const int SYNC_BUFFER = 0;
-const int SYNC_BUFFER_VSYNC = 1;
+const int SYNC_BUFFER_40MHZ = 0;
+const int SYNC_BUFFER_VSYNC_40MHZ = 1;
+const int SYNC_BUFFER_20MHZ = 2;
+const int SYNC_BUFFER_VSYNC_20MHZ = 3;
 
-uint8_t frameCounter = 0;
+uint16_t frameCounter = 0;
 uint8_t palette[] = {3, 12, 48, 63};
 int16_t sinTable[256];
 int16_t cosTable[256];
@@ -92,20 +127,61 @@ uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
 }
 
-void set_800_600(HVTiming *vga_timing) {
-    vga_timing->h.visible_area = 800/SCALE;
-    vga_timing->h.front_porch = 40/SCALE;
-    vga_timing->h.sync_pulse = 128/SCALE;
-    vga_timing->h.back_porch = 88/SCALE;
+void set_800_600(HVTiming *vga_timing, int scale) {
+    vga_timing->h.visible_area = 800/scale;
+    vga_timing->h.front_porch = 40/scale;
+    vga_timing->h.sync_pulse = 128/scale;
+    vga_timing->h.back_porch = 88/scale;
     vga_timing->h.length = get_length(&vga_timing->h);
-    vga_timing->v.visible_area = 600;
-    vga_timing->v.front_porch = 1;
-    vga_timing->v.sync_pulse = 4;
-    vga_timing->v.back_porch = 23;
+    memcpy(&vga_timing->v, &VGA_VERTICAL_TIMING, sizeof(Timing));
     vga_timing->v.length = get_length(&vga_timing->v);
-    vga_timing->pixel_clock = 40000000.0/(float)SCALE;
+    vga_timing->pixel_clock = 40000000.0/(float)scale;
 }
 
+void stop_video(PioConf *pio_conf) {
+    for (int i = 0; i < 4; i++) {
+        dma_channel_abort(dma_chan[i]);
+    }
+    pio_sm_set_enabled(pio_conf->pio, pio_conf->sm, false);
+}
+
+void configure_and_restart_dma(PioConf *pio_conf) {
+    last_mode = vram.mode;
+    bool hires = last_mode == 0;
+    sync_buffer_offset = hires ? 0 : 2;
+    set_800_600(&vga_timing, hires ? 1 : 2);
+
+    const int framebuffer_words = vga_timing.h.visible_area >> 2;
+    const int sync_words = get_length(&vga_timing.h)/4 - framebuffer_words;
+
+    float freq = vga_timing.pixel_clock;
+    float clock_div = debugMode ? 65535 : (clock_get_hz(clk_sys) / freq);
+
+    vga_program_init(pio_conf->pio, pio_conf->sm, pio_conf->offset, VGA_BASE_PIN, clock_div);
+    for (int i = 0; i < 4; i+=2) {
+        // Setup pixel data DMA (0, 2)
+        dma_channel_config c = dma_channel_get_default_config(dma_chan[i]);
+        channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+        channel_config_set_read_increment(&c, true);
+        channel_config_set_dreq(&c, DREQ_PIO0_TX0);
+        channel_config_set_chain_to(&c, dma_chan[i+1]);
+        dma_channel_configure(dma_chan[i], &c, &pio0_hw->txf[0], framebuffer[i>>2], framebuffer_words, false);
+        dma_channel_set_irq0_enabled(dma_chan[i], true);
+
+        // Setup sync data DMA (1, 3)
+        c = dma_channel_get_default_config(dma_chan[i+1]);
+        channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+        channel_config_set_read_increment(&c, true);
+        channel_config_set_dreq(&c, DREQ_PIO0_TX0);
+        channel_config_set_chain_to(&c, dma_chan[(i+2)%4]);
+        dma_channel_configure(dma_chan[i+1], &c, &pio0_hw->txf[0], syncbuffer[sync_buffer_offset], sync_words, false);
+        dma_channel_set_irq0_enabled(dma_chan[i+1], true);
+    }
+
+    next_row = 1;
+    current_dma = 0;
+    dma_start_channel_mask(1u << dma_chan[0]);
+}
 
 void init_sync_buffer(uint8_t buffer[], Timing *t, uint8_t vsync_mask) {
     uint8_t hsync_mask = 1 << HSYNC_BIT;
@@ -216,6 +292,40 @@ static inline void draw_text(uint8_t *fb) {
     }
 }
 
+
+static inline void draw_hires_text(uint8_t *fb) {
+    uint16_t yRow = (pixel_row + vram.scrollY) & 0x1ff;
+    uint16_t yOffset = (yRow >> 3) << 7;
+    uint16_t yMod = yRow & 7;
+    uint16_t xOffset = ((vram.scrollX & 0x3ff) >> 3);
+    uint8_t *scrPos = &vram.screen[yOffset];
+    uint8_t *colorPos = &vram.colorMem[yOffset];
+    uint8_t c;
+    uint16_t xpos = (7-vram.scrollX) & 7;
+
+    for (uint8_t tile = 0; tile < HIRES_CHARS_PER_LINE; tile++) {
+        *color16 = vram.palettes[colorPos[xOffset]] & 0x3F3F;
+        c = vram.font[(scrPos[xOffset] << 3) + yMod];
+        fb[xpos+7] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+6] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+5] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+4] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+3] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+2] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+1] = colors[c&1];
+        c = c >> 1;
+        fb[xpos] = colors[c&1];
+        xpos+=8;
+        xOffset = (xOffset + 1) & 127;
+    }
+}
+
 static inline void pixel_dma_handler() {
     // The chained DMA has already started the next row when IRQ happens, so we need to increase
     // the counter here to be in sync with what we are setting up for next IRQ
@@ -233,6 +343,7 @@ static inline void pixel_dma_handler() {
         scrollPos++;
         vram.scrollX = 0;
         vram.scrollY = 0;
+        vram.mode = (frameCounter >> 8) % 3;
         //vram.scrollY = sinTable[scrollPos++];
         //vram.scrollX++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
@@ -241,20 +352,25 @@ static inline void pixel_dma_handler() {
             vram.spriteY[i] = sinTable[spritePos[i]];
             vram.spriteX[i] = cosTable[spritePos[i]];
         }
-    }
-    vram.mode = (next_row >> 7) &1;
-    if (next_row < LAST_VISIBLE_ROW) {
-        if (vram.mode) {
-            draw_bitmap(fb);
-        } else {
-            draw_text(fb);
+        if (last_mode != vram.mode) {
+            configure_and_restart_dma(&pio_conf);
         }
-        draw_sprites(fb);
+    }
+    if (next_row < LAST_VISIBLE_ROW) {
+        if (last_mode == 0) {
+            draw_hires_text(fb);
+        } else if (last_mode == 1) {
+            draw_text(fb);
+            draw_sprites(fb);
+        } else if (last_mode == 2) {
+            draw_bitmap(fb);
+            draw_sprites(fb);
+        }
     }
 }
 
 static inline void sync_dma_handler() {
-    uint8_t *sb = syncbuffer[syncbuffer_index[next_row]];
+    uint8_t *sb = syncbuffer[syncbuffer_index[next_row] + sync_buffer_offset];
     dma_channel_set_read_addr(dma_chan[current_dma], sb, false);
 }
 
@@ -274,33 +390,35 @@ void init_buffers() {
     uint8_t vsync_off_mask = 0;
     // Three framebuffers are for visible display (tripple buffering) + one with black pixels
     for (int i = 0; i < 3; i++) {
-        memset(framebuffer[i], 0, 512);
+        memset(framebuffer[i], 0, FRAME_BUFFER_SIZE);
     }
-    memset(framebuffer[PIXEL_BUFFER_SYNC], vsync_on_mask, 512);
+    memset(framebuffer[PIXEL_BUFFER_SYNC], vsync_on_mask, FRAME_BUFFER_SIZE);
 
     // Vertical blank buffer, no pixels
-    init_sync_buffer(syncbuffer[SYNC_BUFFER], &vga_timing.h, vsync_off_mask);
+    init_sync_buffer(syncbuffer[SYNC_BUFFER_40MHZ], &VGA_TIMING_40MHZ, vsync_off_mask);
+    init_sync_buffer(syncbuffer[SYNC_BUFFER_20MHZ], &VGA_TIMING_20MHZ, vsync_off_mask);
     // Vertical sync buffer, no pixels
-    init_sync_buffer(syncbuffer[SYNC_BUFFER_VSYNC], &vga_timing.h, vsync_on_mask);
+    init_sync_buffer(syncbuffer[SYNC_BUFFER_VSYNC_40MHZ], &VGA_TIMING_40MHZ, vsync_on_mask);
+    init_sync_buffer(syncbuffer[SYNC_BUFFER_VSYNC_20MHZ], &VGA_TIMING_20MHZ, vsync_on_mask);
 
     uint16_t pos = 0;
-    for (int i = 0; i < vga_timing.v.visible_area; i++) {
-        syncbuffer_index[pos] = SYNC_BUFFER;
+    for (int i = 0; i < VGA_VERTICAL_TIMING.visible_area; i++) {
+        syncbuffer_index[pos] = SYNC_BUFFER_40MHZ;
         framebuffer_index[pos] = (pos>>1)&1;
         pos++;
     }
-    for (int i = 0; i < vga_timing.v.front_porch; i++) {
-        syncbuffer_index[pos] = SYNC_BUFFER;
+    for (int i = 0; i < VGA_VERTICAL_TIMING.front_porch; i++) {
+        syncbuffer_index[pos] = SYNC_BUFFER_40MHZ;
         framebuffer_index[pos] = PIXEL_BUFFER_PORCH;
         pos++;
     }
-    for (int i = 0; i < vga_timing.v.sync_pulse; i++) {
-        syncbuffer_index[pos] = SYNC_BUFFER_VSYNC;
+    for (int i = 0; i < VGA_VERTICAL_TIMING.sync_pulse; i++) {
+        syncbuffer_index[pos] = SYNC_BUFFER_VSYNC_40MHZ;
         framebuffer_index[pos] = PIXEL_BUFFER_SYNC;
         pos++;
     }
-    for (int i = 0; i < vga_timing.v.back_porch; i++) {
-        syncbuffer_index[pos] = SYNC_BUFFER;
+    for (int i = 0; i < VGA_VERTICAL_TIMING.back_porch; i++) {
+        syncbuffer_index[pos] = SYNC_BUFFER_40MHZ;
         framebuffer_index[pos] = PIXEL_BUFFER_PORCH;
         pos++;
     }
@@ -342,6 +460,8 @@ void gpio_irq_handler(uint gpio, uint32_t events) {
 void init_vram() {
     color16 = (uint16_t*)colors;
     memcpy(vram.font, font, 2048);
+    vram.mode = 0;
+    last_mode = 0;
 }
 
 void boot_loader() {
@@ -351,54 +471,28 @@ void boot_loader() {
 int main() {
     boot_loader();
     init_vram();
-    int debug = isDebug();
+    debugMode = isDebug();
 
     set_sys_clock_khz(270000, true);
 
-    set_800_600(&vga_timing);
     init_buffers();
-
-    PIO pio = pio0;
-    const uint8_t VGA_BASE_PIN = 8;
-
-    uint offset = pio_add_program(pio, &vga_program);
-    uint sm = pio_claim_unused_sm(pio, true);
-    float freq = vga_timing.pixel_clock;
-    float div = debug ? 65535 : (clock_get_hz(clk_sys) / freq);
-
     init_app_stuff();
-    vga_program_init(pio, sm, offset, VGA_BASE_PIN, div);
 
-    const int framebuffer_words = vga_timing.h.visible_area/4;
-    const int sync_words = get_length(&vga_timing.h)/4 - framebuffer_words;
+    pio_conf.pio = pio0;
+    pio_conf.offset = pio_add_program(pio_conf.pio, &vga_program);
+    pio_conf.sm = pio_claim_unused_sm(pio_conf.pio, true);
+
+    for (int i = 0; i < 8; i++) {
+        pio_gpio_init(pio_conf.pio, VGA_BASE_PIN+i);
+    }
+
     dma_chan[0] = dma_claim_unused_channel(true);
     dma_chan[1] = dma_claim_unused_channel(true);
     dma_chan[2] = dma_claim_unused_channel(true);
     dma_chan[3] = dma_claim_unused_channel(true);
-    for (int i = 0; i < 4; i+=2) {
-        // Setup pixel data DMA (0, 2)
-        dma_channel_config c = dma_channel_get_default_config(dma_chan[i]);
-        channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-        channel_config_set_read_increment(&c, true);
-        channel_config_set_dreq(&c, DREQ_PIO0_TX0);
-        channel_config_set_chain_to(&c, dma_chan[i+1]);
-        dma_channel_configure(dma_chan[i], &c, &pio0_hw->txf[0], framebuffer[i>>1], framebuffer_words, false);
-        dma_channel_set_irq0_enabled(dma_chan[i], true);
-
-        // Setup sync data DMA (1, 3)
-        c = dma_channel_get_default_config(dma_chan[i+1]);
-        channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
-        channel_config_set_read_increment(&c, true);
-        channel_config_set_dreq(&c, DREQ_PIO0_TX0);
-        channel_config_set_chain_to(&c, dma_chan[(i+2)%4]);
-        dma_channel_configure(dma_chan[i+1], &c, &pio0_hw->txf[0], syncbuffer[0], sync_words, false);
-        dma_channel_set_irq0_enabled(dma_chan[i+1], true);
-    }
+    configure_and_restart_dma(&pio_conf);
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
-    next_row = 1;
-    current_dma = 0;
-    dma_start_channel_mask(1u << dma_chan[0]);
     const int positiveEdge = 1 << 3;
     gpio_set_irq_enabled_with_callback(DEBUG_PIN, positiveEdge, true, gpio_irq_handler);
     while (true) {

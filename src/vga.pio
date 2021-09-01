@@ -3,9 +3,6 @@
 
 %c-sdk {
 static inline void vga_program_init(PIO pio, uint sm, uint offset, uint pin, float clock_div) {
-    for (int i = 0; i < 8; i++) {
-        pio_gpio_init(pio, pin+i);
-    }
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 8, true);
 
     pio_sm_config c = vga_program_get_default_config(offset);

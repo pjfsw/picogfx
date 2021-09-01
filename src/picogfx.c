@@ -19,7 +19,7 @@
 #define CHARS_PER_LINE 52
 #define HIRES_CHARS_PER_LINE 102
 #define V_VISIBLE_AREA 600
-#define LAST_VISIBLE_ROW 596
+#define LAST_VISIBLE_ROW 592
 #define SPRITE_RIGHT_EDGE 416
 #define ROWS_PER_FRAME 628
 #define FRAME_BUFFER_SIZE 1024
@@ -75,8 +75,6 @@ int dma_chan[4];
 uint16_t current_dma;
 uint16_t next_row;
 uint16_t pixel_row;
-// We probably[tm] won't use higher resolutions than 800x600
-uint8_t framebuffer[4][FRAME_BUFFER_SIZE];
 uint8_t syncbuffer[4][512];
 uint8_t framebuffer_index[ROWS_PER_FRAME];
 uint8_t syncbuffer_index[ROWS_PER_FRAME];
@@ -85,9 +83,12 @@ uint8_t scrollPos;
 uint8_t colors[] = {0,0};
 uint16_t *color16;
 
+// We probably[tm] won't use higher resolutions than 800x600
+uint8_t framebuffer[4][FRAME_BUFFER_SIZE];
+
+const uint16_t colorMemOffset = 32768;
 typedef struct {
-    uint8_t screen[SCRW*SCRH];
-    uint8_t colorMem[SCRW*SCRH];
+    uint8_t screen[65536];
     uint16_t spriteX[NUMBER_OF_SPRITES];
     uint16_t spriteY[NUMBER_OF_SPRITES];
     uint8_t spriteHeight[NUMBER_OF_SPRITES];
@@ -145,8 +146,8 @@ void stop_video(PioConf *pio_conf) {
     pio_sm_set_enabled(pio_conf->pio, pio_conf->sm, false);
 }
 
-void configure_and_restart_dma(PioConf *pio_conf) {
-    last_mode = vram.mode;
+void configure_and_restart_dma(PioConf *pio_conf, int mode) {
+    last_mode = mode;
     bool hires = last_mode == 0;
     sync_buffer_offset = hires ? 0 : 2;
     set_800_600(&vga_timing, hires ? 1 : 2);
@@ -232,7 +233,7 @@ static inline void draw_bitmap(uint8_t *fb) {
     uint16_t yOffset = ((pixel_row + vram.scrollY) & 0x1ff) << 6;
     uint16_t xOffset = ((vram.scrollX & 0x1ff) >> 3);
     uint8_t *scrPos = &vram.screen[yOffset];
-    uint8_t *colorPos = &vram.colorMem[yOffset];
+    uint8_t *colorPos = scrPos + colorMemOffset;
     uint8_t c;
     uint16_t xpos = (7-vram.scrollX) & 7;
 
@@ -265,7 +266,7 @@ static inline void draw_text(uint8_t *fb) {
     uint16_t yMod = yRow & 7;
     uint16_t xOffset = ((vram.scrollX & 0x1ff) >> 3);
     uint8_t *scrPos = &vram.screen[yOffset];
-    uint8_t *colorPos = &vram.colorMem[yOffset];
+    uint8_t *colorPos = scrPos + colorMemOffset;
     uint8_t c;
     uint16_t xpos = (7-vram.scrollX) & 7;
 
@@ -299,7 +300,7 @@ static inline void draw_hires_text(uint8_t *fb) {
     uint16_t yMod = yRow & 7;
     uint16_t xOffset = ((vram.scrollX & 0x3ff) >> 3);
     uint8_t *scrPos = &vram.screen[yOffset];
-    uint8_t *colorPos = &vram.colorMem[yOffset];
+    uint8_t *colorPos = scrPos + colorMemOffset;
     uint8_t c;
     uint16_t xpos = (7-vram.scrollX) & 7;
 
@@ -341,9 +342,9 @@ static inline void pixel_dma_handler() {
     if (next_row == 0) {
         frameCounter++;
         scrollPos++;
-        vram.scrollX = 0;
-        vram.scrollY = 0;
-        vram.mode = (frameCounter >> 8) % 3;
+        vram.scrollX++;
+        vram.scrollY++;
+        vram.mode = (frameCounter >> 9) & 3;
         //vram.scrollY = sinTable[scrollPos++];
         //vram.scrollX++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
@@ -352,8 +353,13 @@ static inline void pixel_dma_handler() {
             vram.spriteY[i] = sinTable[spritePos[i]];
             vram.spriteX[i] = cosTable[spritePos[i]];
         }
-        if (last_mode != vram.mode) {
-            configure_and_restart_dma(&pio_conf);
+        uint8_t mode = vram.mode;
+        if (last_mode != mode) {
+            if (last_mode == 0 || mode == 0) {
+                configure_and_restart_dma(&pio_conf, mode);
+            } else {
+                last_mode = mode;
+            }
         }
     }
     if (next_row < LAST_VISIBLE_ROW) {
@@ -362,7 +368,7 @@ static inline void pixel_dma_handler() {
         } else if (last_mode == 1) {
             draw_text(fb);
             draw_sprites(fb);
-        } else if (last_mode == 2) {
+        } else {
             draw_bitmap(fb);
             draw_sprites(fb);
         }
@@ -402,9 +408,14 @@ void init_buffers() {
     init_sync_buffer(syncbuffer[SYNC_BUFFER_VSYNC_20MHZ], &VGA_TIMING_20MHZ, vsync_on_mask);
 
     uint16_t pos = 0;
-    for (int i = 0; i < VGA_VERTICAL_TIMING.visible_area; i++) {
+    for (int i = 0; i < LAST_VISIBLE_ROW; i++) {
         syncbuffer_index[pos] = SYNC_BUFFER_40MHZ;
         framebuffer_index[pos] = (pos>>1)&1;
+        pos++;
+    }
+    for (int i = LAST_VISIBLE_ROW; i < VGA_VERTICAL_TIMING.visible_area; i++) {
+        syncbuffer_index[pos] = SYNC_BUFFER_40MHZ;
+        framebuffer_index[pos] = PIXEL_BUFFER_PORCH;
         pos++;
     }
     for (int i = 0; i < VGA_VERTICAL_TIMING.front_porch; i++) {
@@ -441,12 +452,11 @@ void init_app_stuff() {
     uint8_t character = 32;
     for (int i = 0; i < SCRW*SCRH; i++) {
         vram.screen[i] = character++;
-        vram.colorMem[i] = palette++;
+        vram.screen[i + colorMemOffset] = palette++;
         if (character > 128) {
             character = 32;
         }
     }
-
 }
 
 void gpio_irq_handler(uint gpio, uint32_t events) {
@@ -490,7 +500,7 @@ int main() {
     dma_chan[1] = dma_claim_unused_channel(true);
     dma_chan[2] = dma_claim_unused_channel(true);
     dma_chan[3] = dma_claim_unused_channel(true);
-    configure_and_restart_dma(&pio_conf);
+    configure_and_restart_dma(&pio_conf, last_mode);
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
     const int positiveEdge = 1 << 3;

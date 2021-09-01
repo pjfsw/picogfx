@@ -5,9 +5,9 @@
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "vga.pio.h"
-#include "font.h"
 #include "spritedata.h"
 #include "math.h"
+#include "font.h"
 
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
@@ -59,8 +59,11 @@ typedef struct {
     uint16_t spriteY[NUMBER_OF_SPRITES];
     uint8_t spriteHeight[NUMBER_OF_SPRITES];
     uint16_t palettes[256];
+    uint8_t mode;   // 0 - 50x36 textmode, 1 - bitmap mode
     uint16_t scrollY;
     uint16_t scrollX;
+    uint8_t font[2048];
+
 } Vram;
 
 Vram vram;
@@ -149,7 +152,7 @@ static inline void draw_sprites(uint8_t *fb) {
     }
 }
 
-static inline void draw_tiles(uint8_t *fb) {
+static inline void draw_bitmap(uint8_t *fb) {
     uint16_t yOffset = ((pixel_row + vram.scrollY) & 0x1ff) << 6;
     uint16_t xOffset = ((vram.scrollX & 0x1ff) >> 3);
     uint8_t *scrPos = &vram.screen[yOffset];
@@ -160,6 +163,39 @@ static inline void draw_tiles(uint8_t *fb) {
     for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
         *color16 = vram.palettes[colorPos[xOffset]] & 0x3F3F;
         c = scrPos[xOffset];
+        fb[xpos+7] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+6] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+5] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+4] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+3] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+2] = colors[c&1];
+        c = c >> 1;
+        fb[xpos+1] = colors[c&1];
+        c = c >> 1;
+        fb[xpos] = colors[c&1];
+        xpos+=8;
+        xOffset = (xOffset + 1) & 63;
+    }
+}
+
+static inline void draw_text(uint8_t *fb) {
+    uint16_t yRow = (pixel_row + vram.scrollY) & 0x1ff;
+    uint16_t yOffset = (yRow >> 3) << 6;
+    uint16_t yMod = yRow & 7;
+    uint16_t xOffset = ((vram.scrollX & 0x1ff) >> 3);
+    uint8_t *scrPos = &vram.screen[yOffset];
+    uint8_t *colorPos = &vram.colorMem[yOffset];
+    uint8_t c;
+    uint16_t xpos = (7-vram.scrollX) & 7;
+
+    for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
+        *color16 = vram.palettes[colorPos[xOffset]] & 0x3F3F;
+        c = vram.font[(scrPos[xOffset] << 3) + yMod];
         fb[xpos+7] = colors[c&1];
         c = c >> 1;
         fb[xpos+6] = colors[c&1];
@@ -206,8 +242,13 @@ static inline void pixel_dma_handler() {
             vram.spriteX[i] = cosTable[spritePos[i]];
         }
     }
+    vram.mode = (next_row >> 7) &1;
     if (next_row < LAST_VISIBLE_ROW) {
-        draw_tiles(fb);
+        if (vram.mode) {
+            draw_bitmap(fb);
+        } else {
+            draw_text(fb);
+        }
         draw_sprites(fb);
     }
 }
@@ -267,7 +308,7 @@ void init_buffers() {
 
 void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
-        sinTable[i] = 150 + 170 * sin(i * M_PI / 128);
+        sinTable[i] = 150 + 140 * sin(i * M_PI / 128);
         cosTable[i] = 208 + 208 * cos(i * M_PI / 128);
     }
     const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
@@ -278,19 +319,13 @@ void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
         vram.palettes[i] = ((i&63)<<8) | (i>>2);
     }
-    uint8_t character = 32;
     uint8_t palette = 0;
-    for (int y = 0; y < 64; y++) {
-        for (int x = 0; x < 64; x++) {
-            for (int f = 0; f < 8; f++) {
-                int pos = (y*8+f)*SCRW+x;
-                vram.screen[pos] = font[character][f];
-                vram.colorMem[pos] = palette++;
-            }
-            character = character + 1;
-            if (character > 128) {
-                character = 32;
-            }
+    uint8_t character = 32;
+    for (int i = 0; i < SCRW*SCRH; i++) {
+        vram.screen[i] = character++;
+        vram.colorMem[i] = palette++;
+        if (character > 128) {
+            character = 32;
         }
     }
 
@@ -306,13 +341,19 @@ void gpio_irq_handler(uint gpio, uint32_t events) {
 
 void init_vram() {
     color16 = (uint16_t*)colors;
+    memcpy(vram.font, font, 2048);
+}
+
+void boot_loader() {
+    // TODO add code to populate RAM memory
 }
 
 int main() {
-    set_sys_clock_khz(270000, true);
+    boot_loader();
     init_vram();
-
     int debug = isDebug();
+
+    set_sys_clock_khz(270000, true);
 
     set_800_600(&vga_timing);
     init_buffers();

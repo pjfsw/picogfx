@@ -12,6 +12,7 @@ pico_sdk_init()
 add_executable(picogfx)
 
 pico_generate_pio_header(picogfx ${CMAKE_CURRENT_LIST_DIR}/src/vga.pio)
+pico_generate_pio_header(picogfx ${CMAKE_CURRENT_LIST_DIR}/src/databus.pio)
 
 target_sources(picogfx PRIVATE
     src/picogfx.c

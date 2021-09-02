@@ -5,13 +5,14 @@
 #include "hardware/dma.h"
 #include "hardware/irq.h"
 #include "vga.pio.h"
+#include "databus.pio.h"
 #include "spritedata.h"
 #include "math.h"
 #include "font.h"
 
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
-#define DEBUG_PIN 7
+//#define DEBUG_PIN 7
 #define SCRW 64
 #define SCRH 512
 #define NUMBER_OF_SPRITES 8
@@ -23,8 +24,8 @@
 #define SPRITE_RIGHT_EDGE 416
 #define ROWS_PER_FRAME 628
 #define FRAME_BUFFER_SIZE 1024
-#define VGA_BASE_PIN 8
-
+#define VGA_BASE_PIN 0
+#define DATABUS_BASE_PIN 8
 
 typedef struct {
     uint16_t visible_area;
@@ -199,11 +200,11 @@ void init_sync_buffer(uint8_t buffer[], Timing *t, uint8_t vsync_mask) {
     }
 }
 
-int isDebug() {
+/*int isDebug() {
     gpio_init(DEBUG_PIN);
     gpio_set_dir(DEBUG_PIN, GPIO_IN);
     return gpio_get(DEBUG_PIN);
-}
+}*/
 
 static inline void draw_sprites(uint8_t *fb) {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
@@ -341,10 +342,10 @@ static inline void pixel_dma_handler() {
     }
     if (next_row == 0) {
         frameCounter++;
-        scrollPos++;
-        vram.scrollX++;
-        vram.scrollY++;
-        vram.mode = (frameCounter >> 9) & 3;
+        //scrollPos++;
+        //vram.scrollX++;
+        //vram.scrollY++;
+        //vram.mode = (frameCounter >> 9) & 3;
         //vram.scrollY = sinTable[scrollPos++];
         //vram.scrollX++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
@@ -481,12 +482,23 @@ void boot_loader() {
 int main() {
     boot_loader();
     init_vram();
-    debugMode = isDebug();
+    //debugMode = isDebug();
+    debugMode = false;
 
     set_sys_clock_khz(270000, true);
 
     init_buffers();
     init_app_stuff();
+
+    const PIO databus_pio = pio1;
+    const uint databus_offset = pio_add_program(databus_pio, &databus_program);
+    const uint databus_sm = pio_claim_unused_sm(databus_pio, true);
+    for (int i = 0; i < 11; i++) {
+        pio_gpio_init(databus_pio, DATABUS_BASE_PIN+i);
+    }
+
+    float databus_clock_div = debugMode ? 65535 : (clock_get_hz(clk_sys) / 2000000.0);
+    databus_program_init(databus_pio, databus_sm, databus_offset, DATABUS_BASE_PIN, databus_clock_div);
 
     pio_conf.pio = pio0;
     pio_conf.offset = pio_add_program(pio_conf.pio, &vga_program);
@@ -504,7 +516,21 @@ int main() {
     irq_set_exclusive_handler(DMA_IRQ_0, dma_handler);
     irq_set_enabled(DMA_IRQ_0, true);
     const int positiveEdge = 1 << 3;
-    gpio_set_irq_enabled_with_callback(DEBUG_PIN, positiveEdge, true, gpio_irq_handler);
+    uint32_t store_address = 0;
+    uint8_t *vram_ptr = (uint8_t*)&vram;
     while (true) {
-    }
+//        if (!pio_sm_is_rx_fifo_empty(databus_pio, databus_sm)) {
+            uint32_t data = pio_sm_get_blocking(databus_pio, databus_sm);
+            uint32_t addr = (data >> 8) & 3;
+            data = data & 0xff;
+            if (addr == 0) {
+                vram_ptr[store_address] = data;
+                store_address = (store_address + 1) & 0x1ffff;
+            } else if (addr == 2) {
+                store_address = (store_address & 0xFF00) | data;
+            } else if (addr == 3) {
+                store_address = (store_address & 0xFF) | (data << 8);
+            }
+        }
+//    }
 }

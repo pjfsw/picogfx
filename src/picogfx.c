@@ -89,14 +89,14 @@ uint8_t framebuffer[4][FRAME_BUFFER_SIZE];
 
 const uint16_t colorMemOffset = 32768;
 typedef struct {
-    uint8_t screen[65536];
-    uint16_t spriteX[NUMBER_OF_SPRITES];
-    uint16_t spriteY[NUMBER_OF_SPRITES];
-    uint8_t spriteHeight[NUMBER_OF_SPRITES];
-    uint16_t palettes[256];
-    uint8_t mode;   // 0 - 50x36 textmode, 1 - bitmap mode
-    uint16_t scrollY;
-    uint16_t scrollX;
+    uint8_t screen[65536];                  // 0x00000
+    uint16_t spriteX[NUMBER_OF_SPRITES];    // 0x10000
+    uint16_t spriteY[NUMBER_OF_SPRITES];    // 0x10010
+    uint8_t spriteHeight[NUMBER_OF_SPRITES];// 0x10020
+    uint16_t palettes[256];                 // 0x10028
+    uint8_t mode;                           // 0x10228, 0 - 100x36 hires, 50x36 char, 400x296 bitmap
+    uint16_t scrollY;                       // 0x10229
+    uint16_t scrollX;                       // 0x1022b
     uint8_t font[2048];
 } Vram;
 uint8_t last_mode = 0;
@@ -497,7 +497,7 @@ int main() {
         pio_gpio_init(databus_pio, DATABUS_BASE_PIN+i);
     }
 
-    float databus_clock_div = debugMode ? 65535 : (clock_get_hz(clk_sys) / 2000000.0);
+    float databus_clock_div = debugMode ? 65535 : (clock_get_hz(clk_sys) / 40000000.0);
     databus_program_init(databus_pio, databus_sm, databus_offset, DATABUS_BASE_PIN, databus_clock_div);
 
     pio_conf.pio = pio0;
@@ -518,18 +518,26 @@ int main() {
     const int positiveEdge = 1 << 3;
     uint32_t store_address = 0;
     uint8_t *vram_ptr = (uint8_t*)&vram;
+    char digits[] = {'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'};
     while (true) {
 //        if (!pio_sm_is_rx_fifo_empty(databus_pio, databus_sm)) {
+            uint32_t v = store_address;
+            for (int i = 0; i < 5; i++) {
+                vram.screen[5-i] = digits[(v >> (4*i)) & 0xf];
+            }
             uint32_t data = pio_sm_get_blocking(databus_pio, databus_sm);
             uint32_t addr = (data >> 8) & 3;
             data = data & 0xff;
             if (addr == 0) {
                 vram_ptr[store_address] = data;
                 store_address = (store_address + 1) & 0x1ffff;
+            } else if (addr == 1) {
+                store_address = (store_address & 0xFFFF) | ((data & 0x80) << 9);
+                store_address = (store_address + (data & 0x7F)) & 0x1ffff;
             } else if (addr == 2) {
-                store_address = (store_address & 0xFF00) | data;
+                store_address = (store_address & 0x1FF00) | data;
             } else if (addr == 3) {
-                store_address = (store_address & 0xFF) | (data << 8);
+                store_address = (store_address & 0x100FF) | (data << 8);
             }
         }
 //    }

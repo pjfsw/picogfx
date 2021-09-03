@@ -9,6 +9,7 @@
 #include "spritedata.h"
 #include "math.h"
 #include "font.h"
+#include "derp.h"
 
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
@@ -18,7 +19,7 @@
 #define NUMBER_OF_SPRITES 8
 #define SPRITE_WIDTH 16
 #define CHARS_PER_LINE 52
-#define BITMAP_BYTES_PER_LINE 100
+#define BITMAP_BYTES_PER_LINE 50
 #define V_VISIBLE_AREA 600
 #define LAST_VISIBLE_ROW 592
 #define SPRITE_RIGHT_EDGE 416
@@ -205,12 +206,12 @@ static inline void draw_sprites(uint8_t *fb) {
 
 static inline void draw_bitmap(uint8_t *fb) {
     uint16_t bitmapRow = (pixel_row - vram->bitmapStart - 512) & 0x1ff;
-    uint16_t yOffset = bitmapRow * 100;
+    uint32_t yOffset = bitmapRow * 100;
     uint16_t *bitmapPos = (uint16_t*)&vramBytes[((vram->bitmapPtr << 1) + yOffset) & 0x1ffff];
     uint16_t xpos = 8; // No scrolling, but framebuffer starts rendering after 8 pixels
     *color32 = vram->bitmapPalette & 0x3f3f3f3f;
     uint16_t c;
-    for (uint8_t tile = 0; tile < BITMAP_BYTES_PER_LINE; tile+=2) {
+    for (uint8_t tile = 0; tile < BITMAP_BYTES_PER_LINE; tile++) {
         c = bitmapPos[tile];
         fb[xpos+7] = colors[c&3];
         c = c >> 2;
@@ -397,16 +398,20 @@ void init_app_stuff() {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         vram->spritePointer[i] = spriteTarget;
     }
-    const int bitmap_height = 128;
+    const int bitmap_height = derp_height;
     vram->bitmapPtr = 0x8100;
-    vram->bitmapStart = 32;
+    vram->bitmapStart = 256;
     vram->bitmapHeight = bitmap_height;
-    vram->bitmapPalette = 0b00111111001010100001010100000000;
+    vram->bitmapPalette = derp_palette;
+    uint16_t bitmap_pos = 0;
+    uint16_t *target_bitmap = (uint16_t*)&vramBytes[vram->bitmapPtr << 1];
+    uint16_t w = derp_width/8;
+    uint16_t xofs = (50-w)/2;
     for (int y = 0; y < bitmap_height; y++) {
-        for (int x = 0; x < 50; x++) {
-            int pos = (vram->bitmapPtr << 1) + y * 100 + 2 * x;
-            vramBytes[pos] = 0b00011011;
-            vramBytes[pos + 1 ] = 0b11100100;
+        for (int x = xofs; x < w+xofs; x++) {
+            int pos = y * 50 + x;
+            target_bitmap[pos] = derp[bitmap_pos++];
+
         }
     }
 

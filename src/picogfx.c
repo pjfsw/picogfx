@@ -89,7 +89,10 @@ typedef struct {
     uint8_t spritePointer[NUMBER_OF_SPRITES];//0x0d028
     uint16_t scrollY;                       // 0x0d030
     uint16_t scrollX;                       // 0x0d032
-    uint8_t mode;                           // 0x0d034
+    uint8_t bitmapStart;                    // 0x0d034
+    uint8_t bitmapHeight;                   // 0x0d035
+    uint16_t bitmapPtr;                     // 0x0d036 = Pointer in gfx mem in 2 byte blocks
+    uint32_t bitmapPalette;                 // 0x0d038
     // 0x10000-0x1ffff Sprite data
 } Vram;
 
@@ -200,18 +203,14 @@ static inline void draw_sprites(uint8_t *fb) {
 }
 
 static inline void draw_bitmap(uint8_t *fb) {
-    uint16_t yRow = (pixel_row + vram->scrollY) & 0x1ff;
-    uint16_t yOffset = yRow << 6;
-    uint16_t xOffset = ((vram->scrollX & 0x1ff) >> 3);
-    uint8_t *scrPos = &vram->screen[yOffset];
+    uint16_t bitmapRow = (pixel_row - vram->bitmapStart) & 0x1ff;
+    uint16_t yOffset = bitmapRow << 6;
+    uint8_t *scrPos = &vramBytes[((vram->bitmapPtr << 1) + yOffset) & 0x1ffff];
+    uint16_t xpos = 0;
+    *color32 = vram->bitmapPalette & 0x3f3f3f3f;
     uint8_t c;
-    uint16_t xpos = (7-vram->scrollX) & 7;
-    uint16_t *colorPos = (uint16_t*)&vram->colorMem[(yRow >> 2) << 5];
-
     for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
-        *color16 = colorPos[xOffset] & 0x3f3f;
-
-        c = scrPos[xOffset];
+        c = scrPos[tile&63];
         fb[xpos+7] = colors[c&1];
         c = c >> 1;
         fb[xpos+6] = colors[c&1];
@@ -228,7 +227,7 @@ static inline void draw_bitmap(uint8_t *fb) {
         c = c >> 1;
         fb[xpos] = colors[c&1];
         xpos+=8;
-        xOffset = (xOffset + 1) & 63;
+        //xOffset = (xOffset + 1) & 63;
     }
 }
 
@@ -282,10 +281,11 @@ static inline void pixel_dma_handler() {
     }
     if (next_row == 0) {
         frameCounter++;
+        vram->bitmapStart = frameCounter;
         //scrollPos++;
         //vram->scrollX++;
         //vram->scrollY++;
-        vram->mode = ((frameCounter >> 9) & 1);
+        //vram->mode = ((frameCounter >> 9) & 1);
         //vram.scrollY = sinTable[scrollPos++];
         //vram.scrollX++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
@@ -296,13 +296,12 @@ static inline void pixel_dma_handler() {
         }
     }
     if (next_row < LAST_VISIBLE_ROW) {
-        if (vram->mode == 0) {
-            draw_tiles(fb);
-            draw_sprites(fb);
-        } else {
+        if (pixel_row >= vram->bitmapStart && pixel_row < vram->bitmapStart + vram->bitmapHeight) {
             draw_bitmap(fb);
-            draw_sprites(fb);
+        } else {
+            draw_tiles(fb);
         }
+        draw_sprites(fb);
     }
 }
 
@@ -397,6 +396,17 @@ void init_app_stuff() {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         vram->spritePointer[i] = spriteTarget;
     }
+    const int bitmap_height = 64;
+    vram->bitmapPtr = 0x8100;
+    vram->bitmapStart = 32;
+    vram->bitmapHeight = bitmap_height;
+    vram->bitmapPalette = 0b00111111001010100001010100000000;
+    for (int y = 0; y < bitmap_height; y++) {
+        for (int x = 0; x < 64; x++) {
+            vramBytes[(vram->bitmapPtr << 1) + y * 64 + x] = 0xaa;
+        }
+    }
+
 }
 
 void init_vram() {
@@ -405,7 +415,6 @@ void init_vram() {
     vram = (Vram*)vramBytes;
     spritePtr = &vramBytes[0x10000];
     memcpy(vram->font, font, 4096);
-    vram->mode = 0;
 }
 
 void boot_loader() {

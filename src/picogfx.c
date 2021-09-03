@@ -93,9 +93,10 @@ typedef struct {
     // 0x10a35-0x1ffff Sprite data
 } Vram;
 
-Vram vram;
-uint8_t dummy[131702-sizeof(Vram)];
-uint8_t *vramBytes = (uint8_t*)&vram;
+uint8_t *spritePtr;
+uint8_t vramBytes[0x20000];
+Vram *vram;
+
 bool debugMode;
 uint32_t nextPtr = 0;
 
@@ -111,7 +112,6 @@ const int SYNC_BUFFER = 0;
 const int SYNC_BUFFER_VSYNC = 1;
 
 uint16_t frameCounter = 0;
-uint8_t palette[] = {3, 12, 48, 63};
 int16_t sinTable[256];
 int16_t cosTable[256];
 
@@ -176,20 +176,21 @@ void init_sync_buffer(uint8_t buffer[], Timing *t, uint8_t vsync_mask) {
 
 static inline void draw_sprites(uint8_t *fb) {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
-        int16_t spritePos = pixel_row-vram.spriteY[i];
-        if (spritePos < 0 || spritePos > vram.spriteHeight[i]) {
+        int16_t spritePos = pixel_row-vram->spriteY[i];
+        if (spritePos < 0 || spritePos > vram->spriteHeight[i]) {
             continue;
         }
+        uint8_t *sprite = &spritePtr[vram->spritePointer[i] << 8];
         spritePos = spritePos << 4;
 
         int n = SPRITE_WIDTH;
-        uint16_t xPos = vram.spriteX[i];
+        uint16_t xPos = vram->spriteX[i];
         if (xPos > SPRITE_RIGHT_EDGE) {
             n = SPRITE_RIGHT_EDGE-xPos;
         }
 
         for (int x = 0; x < n; x++) {
-            uint8_t c = spritedata[spritePos++];
+            uint8_t c = sprite[spritePos++];
             if ((c & 0x80) == 0) {
                 fb[xPos] = c & 63;
             }
@@ -199,15 +200,15 @@ static inline void draw_sprites(uint8_t *fb) {
 }
 
 static inline void draw_bitmap(uint8_t *fb) {
-    uint16_t yOffset = ((pixel_row + vram.scrollY) & 0x1ff) << 6;
-    uint16_t xOffset = ((vram.scrollX & 0x1ff) >> 3);
-    uint8_t *scrPos = &vram.screen[yOffset];
-    uint8_t *colorPos = &vram.colorMem[yOffset];
+    uint16_t yOffset = ((pixel_row + vram->scrollY) & 0x1ff) << 6;
+    uint16_t xOffset = ((vram->scrollX & 0x1ff) >> 3);
+    uint8_t *scrPos = &vram->screen[yOffset];
+    uint8_t *colorPos = &vram->colorMem[yOffset];
     uint8_t c;
-    uint16_t xpos = (7-vram.scrollX) & 7;
+    uint16_t xpos = (7-vram->scrollX) & 7;
 
     for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
-        *color16 = vram.palettes[colorPos[xOffset]] & 0x3F3F;
+        *color16 = vram->palettes[colorPos[xOffset]] & 0x3F3F;
         c = scrPos[xOffset];
         fb[xpos+7] = colors[c&1];
         c = c >> 1;
@@ -230,18 +231,18 @@ static inline void draw_bitmap(uint8_t *fb) {
 }
 
 static inline void draw_text(uint8_t *fb) {
-    uint16_t yRow = (pixel_row + vram.scrollY) & 0x1ff;
+    uint16_t yRow = (pixel_row + vram->scrollY) & 0x1ff;
     uint16_t yOffset = (yRow >> 3) << 6;
     uint16_t yMod = yRow & 7;
-    uint16_t xOffset = ((vram.scrollX & 0x1ff) >> 3);
-    uint8_t *scrPos = &vram.screen[yOffset];
-    uint8_t *colorPos = &vram.colorMem[yOffset];
+    uint16_t xOffset = ((vram->scrollX & 0x1ff) >> 3);
+    uint8_t *scrPos = &vram->screen[yOffset];
+    uint8_t *colorPos = &vram->colorMem[yOffset];
     uint8_t c;
-    uint16_t xpos = (7-vram.scrollX) & 7;
+    uint16_t xpos = (7-vram->scrollX) & 7;
 
     for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
-        *color16 = vram.palettes[colorPos[xOffset]] & 0x3F3F;
-        c = vram.font[(scrPos[xOffset] << 3) + yMod];
+        *color16 = vram->palettes[colorPos[xOffset]] & 0x3F3F;
+        c = vram->font[(scrPos[xOffset] << 3) + yMod];
         fb[xpos+7] = colors[c&1];
         c = c >> 1;
         fb[xpos+6] = colors[c&1];
@@ -277,21 +278,20 @@ static inline void pixel_dma_handler() {
     if (next_row == 0) {
         frameCounter++;
         //scrollPos++;
-        vram.scrollX++;
-        vram.scrollY++;
-        vram.mode = ((frameCounter >> 9) & 1);
+        vram->scrollX++;
+        vram->scrollY++;
+        vram->mode = ((frameCounter >> 9) & 1);
         //vram.scrollY = sinTable[scrollPos++];
         //vram.scrollX++;
         for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
             //spriteX[i]++;
             spritePos[i]++;
-            vram.spriteY[i] = sinTable[spritePos[i]];
-            vram.spriteX[i] = cosTable[spritePos[i]];
+            vram->spriteY[i] = sinTable[spritePos[i]];
+            vram->spriteX[i] = cosTable[spritePos[i]];
         }
-        uint8_t mode = vram.mode;
     }
     if (next_row < LAST_VISIBLE_ROW) {
-        if (vram.mode == 0) {
+        if (vram->mode == 0) {
             draw_text(fb);
             draw_sprites(fb);
         } else {
@@ -367,34 +367,33 @@ void init_app_stuff() {
     const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         spritePos[i] = i << 2;
-        vram.spriteHeight[i] = 24;
+        vram->spriteHeight[i] = 24;
     }
     for (int i = 0; i < 256; i++) {
-        vram.palettes[i] = ((i&63)<<8) | (i>>2);
+        vram->palettes[i] = ((i&63)<<8) | (i>>2);
     }
     uint8_t palette = 0;
     uint8_t character = 32;
     for (int i = 0; i < SCRW*SCRH; i++) {
-        vram.screen[i] = character++;
-        vram.colorMem[i] = palette++;
+        vram->screen[i] = character++;
+        vram->colorMem[i] = palette++;
         if (character > 128) {
             character = 32;
         }
     }
+    const int spriteTarget = 11;
+    memcpy(&spritePtr[spriteTarget << 8], spritedata, sizeof(spritedata));
+    for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
+        vram->spritePointer[i] = spriteTarget;
+    }
 }
-
-void gpio_irq_handler(uint gpio, uint32_t events) {
-    gpio_acknowledge_irq(gpio, events);
-    uint32_t v = gpio_get_all();
-    vramBytes[nextPtr] = v & 255;
-    nextPtr = (nextPtr + 1) % 131072;
-}
-
 
 void init_vram() {
     color16 = (uint16_t*)colors;
-    memcpy(vram.font, font, 2048);
-    vram.mode = 0;
+    vram = (Vram*)vramBytes;
+    spritePtr = &vramBytes[0x10000];
+    memcpy(vram->font, font, 2048);
+    vram->mode = 0;
 }
 
 void boot_loader() {
@@ -445,7 +444,7 @@ int main() {
 //        if (!pio_sm_is_rx_fifo_empty(databus_pio, databus_sm)) {
             uint32_t v = store_address;
             for (int i = 0; i < 5; i++) {
-                vram.screen[5-i] = digits[(v >> (4*i)) & 0xf];
+                vram->screen[5-i] = digits[(v >> (4*i)) & 0xf];
             }
             uint32_t data = pio_sm_get_blocking(databus_pio, databus_sm);
             uint32_t addr = (data >> 8) & 3;

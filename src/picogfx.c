@@ -18,6 +18,7 @@
 #define NUMBER_OF_SPRITES 8
 #define SPRITE_WIDTH 16
 #define CHARS_PER_LINE 52
+#define BITMAP_BYTES_PER_LINE 100
 #define V_VISIBLE_AREA 600
 #define LAST_VISIBLE_ROW 592
 #define SPRITE_RIGHT_EDGE 416
@@ -89,10 +90,10 @@ typedef struct {
     uint8_t spritePointer[NUMBER_OF_SPRITES];//0x0d028
     uint16_t scrollY;                       // 0x0d030
     uint16_t scrollX;                       // 0x0d032
-    uint8_t bitmapStart;                    // 0x0d034
-    uint8_t bitmapHeight;                   // 0x0d035
-    uint16_t bitmapPtr;                     // 0x0d036 = Pointer in gfx mem in 2 byte blocks
-    uint32_t bitmapPalette;                 // 0x0d038
+    uint16_t bitmapStart;                   // 0x0d034 // 0-1024, 512 = first visible row
+    uint16_t bitmapHeight;                  // 0x0d036
+    uint16_t bitmapPtr;                     // 0x0d038 = Pointer in gfx mem in 2 byte blocks
+    uint32_t bitmapPalette;                 // 0x0d03a
     // 0x10000-0x1ffff Sprite data
 } Vram;
 
@@ -203,31 +204,30 @@ static inline void draw_sprites(uint8_t *fb) {
 }
 
 static inline void draw_bitmap(uint8_t *fb) {
-    uint16_t bitmapRow = (pixel_row - vram->bitmapStart) & 0x1ff;
-    uint16_t yOffset = bitmapRow << 6;
-    uint8_t *scrPos = &vramBytes[((vram->bitmapPtr << 1) + yOffset) & 0x1ffff];
-    uint16_t xpos = 0;
+    uint16_t bitmapRow = (pixel_row - vram->bitmapStart - 512) & 0x1ff;
+    uint16_t yOffset = bitmapRow * 100;
+    uint16_t *bitmapPos = (uint16_t*)&vramBytes[((vram->bitmapPtr << 1) + yOffset) & 0x1ffff];
+    uint16_t xpos = 8; // No scrolling, but framebuffer starts rendering after 8 pixels
     *color32 = vram->bitmapPalette & 0x3f3f3f3f;
-    uint8_t c;
-    for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
-        c = scrPos[tile&63];
-        fb[xpos+7] = colors[c&1];
-        c = c >> 1;
-        fb[xpos+6] = colors[c&1];
-        c = c >> 1;
-        fb[xpos+5] = colors[c&1];
-        c = c >> 1;
-        fb[xpos+4] = colors[c&1];
-        c = c >> 1;
-        fb[xpos+3] = colors[c&1];
-        c = c >> 1;
-        fb[xpos+2] = colors[c&1];
-        c = c >> 1;
-        fb[xpos+1] = colors[c&1];
-        c = c >> 1;
-        fb[xpos] = colors[c&1];
+    uint16_t c;
+    for (uint8_t tile = 0; tile < BITMAP_BYTES_PER_LINE; tile+=2) {
+        c = bitmapPos[tile];
+        fb[xpos+7] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+6] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+5] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+4] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+3] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+2] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+1] = colors[c&3];
+        c = c >> 2;
+        fb[xpos] = colors[c&3];
         xpos+=8;
-        //xOffset = (xOffset + 1) & 63;
     }
 }
 
@@ -281,9 +281,9 @@ static inline void pixel_dma_handler() {
     }
     if (next_row == 0) {
         frameCounter++;
-        vram->bitmapStart = frameCounter;
+        vram->bitmapStart = frameCounter & 0x3ff;
         //scrollPos++;
-        //vram->scrollX++;
+        vram->scrollX++;
         //vram->scrollY++;
         //vram->mode = ((frameCounter >> 9) & 1);
         //vram.scrollY = sinTable[scrollPos++];
@@ -296,7 +296,8 @@ static inline void pixel_dma_handler() {
         }
     }
     if (next_row < LAST_VISIBLE_ROW) {
-        if (pixel_row >= vram->bitmapStart && pixel_row < vram->bitmapStart + vram->bitmapHeight) {
+        int16_t bitmap_start = vram->bitmapStart - 512;
+        if (pixel_row >= bitmap_start && pixel_row < bitmap_start + vram->bitmapHeight) {
             draw_bitmap(fb);
         } else {
             draw_tiles(fb);
@@ -396,14 +397,16 @@ void init_app_stuff() {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         vram->spritePointer[i] = spriteTarget;
     }
-    const int bitmap_height = 64;
+    const int bitmap_height = 128;
     vram->bitmapPtr = 0x8100;
     vram->bitmapStart = 32;
     vram->bitmapHeight = bitmap_height;
     vram->bitmapPalette = 0b00111111001010100001010100000000;
     for (int y = 0; y < bitmap_height; y++) {
-        for (int x = 0; x < 64; x++) {
-            vramBytes[(vram->bitmapPtr << 1) + y * 64 + x] = 0xaa;
+        for (int x = 0; x < 50; x++) {
+            int pos = (vram->bitmapPtr << 1) + y * 100 + 2 * x;
+            vramBytes[pos] = 0b00011011;
+            vramBytes[pos + 1 ] = 0b11100100;
         }
     }
 

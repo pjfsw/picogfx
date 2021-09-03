@@ -282,7 +282,7 @@ static inline void pixel_dma_handler() {
     }
     if (next_row == 0) {
         frameCounter++;
-        vram->bitmapStart = frameCounter & 0x3ff;
+        //vram->bitmapStart = frameCounter & 0x3ff;
         //scrollPos++;
         vram->scrollX++;
         //vram->scrollY++;
@@ -400,7 +400,7 @@ void init_app_stuff() {
     }
     const int bitmap_height = derp_height;
     vram->bitmapPtr = 0x8100;
-    vram->bitmapStart = 256;
+    vram->bitmapStart = 512;
     vram->bitmapHeight = bitmap_height;
     vram->bitmapPalette = derp_palette;
     uint16_t bitmap_pos = 0;

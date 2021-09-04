@@ -1,5 +1,6 @@
 #include <string.h>
 #include "pico/stdlib.h"
+#include "stdio.h"
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
@@ -212,15 +213,9 @@ static inline void draw_bitmap(uint8_t *fb) {
     *color32 = vram->bitmapPalette & 0x3f3f3f3f;
     uint16_t c;
     for (uint8_t tile = 0; tile < BITMAP_BYTES_PER_LINE; tile++) {
+        // Due to little endian, left 8 pixels are now in lower 8 bits, so we need to store right
+        // byte first then left :derp:
         c = bitmapPos[tile];
-        fb[xpos+7] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+6] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+5] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+4] = colors[c&3];
-        c = c >> 2;
         fb[xpos+3] = colors[c&3];
         c = c >> 2;
         fb[xpos+2] = colors[c&3];
@@ -228,6 +223,14 @@ static inline void draw_bitmap(uint8_t *fb) {
         fb[xpos+1] = colors[c&3];
         c = c >> 2;
         fb[xpos] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+7] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+6] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+5] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+4] = colors[c&3];
         xpos+=8;
     }
 }
@@ -405,7 +408,7 @@ void init_app_stuff() {
     vram->bitmapPalette = derp_palette;
     uint16_t bitmap_pos = 0;
     uint16_t *target_bitmap = (uint16_t*)&vramBytes[vram->bitmapPtr << 1];
-    uint16_t w = derp_width/8;
+    uint16_t w = derp_width/2; // Width in bytes, convert to 16-bit words
     uint16_t xofs = (50-w)/2;
     for (int y = 0; y < bitmap_height; y++) {
         for (int x = xofs; x < w+xofs; x++) {
@@ -426,7 +429,16 @@ void init_vram() {
 }
 
 void boot_loader() {
-    // TODO add code to populate RAM memory
+    stdio_init_all();
+/*
+    const int buf_size = 80;
+    char buffer[buf_size];
+    printf("PicoGFX\n");
+    while (true ) {
+        fgets(buffer, buf_size, stdin);
+        printf("You typed: %s\n", buffer);
+        sleep_ms(1000);
+    }*/
 }
 
 int main() {

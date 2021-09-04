@@ -24,7 +24,7 @@ target_link_libraries(picogfx PRIVATE
     hardware_irq
     hardware_dma
     )
-pico_enable_stdio_usb(picogfx 1)
-pico_enable_stdio_uart(picogfx 0)
+#pico_enable_stdio_usb(picogfx 1)
+#pico_enable_stdio_uart(picogfx 0)
 
 pico_add_extra_outputs(picogfx)

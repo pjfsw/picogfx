@@ -10,7 +10,8 @@
 #include "spritedata.h"
 #include "math.h"
 #include "font.h"
-#include "derp.h"
+//#include "derp.h"
+#include "sixteencolors.h"
 
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
@@ -75,7 +76,7 @@ uint8_t framebuffer_index[ROWS_PER_FRAME];
 uint8_t syncbuffer_index[ROWS_PER_FRAME];
 
 uint8_t scrollPos;
-uint8_t colors[] = {0,0,0,0};
+uint8_t colors[] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 uint16_t *color16;
 uint32_t *color32;
 
@@ -95,7 +96,7 @@ typedef struct {
     uint16_t bitmapStart;                   // 0x0d034 // 0-1024, 512 = first visible row
     uint16_t bitmapHeight;                  // 0x0d036
     uint16_t bitmapPtr;                     // 0x0d038 = Pointer in gfx mem in 2 byte blocks
-    uint32_t bitmapPalette;                 // 0x0d03a
+    uint32_t bitmapPalette[4];              // 0x0d03a
     // 0x10000-0x1ffff Sprite data
 } Vram;
 
@@ -207,30 +208,38 @@ static inline void draw_sprites(uint8_t *fb) {
 
 static inline void draw_bitmap(uint8_t *fb) {
     uint16_t bitmapRow = (pixel_row - vram->bitmapStart - 512) & 0x1ff;
-    uint32_t yOffset = bitmapRow * 100;
-    uint16_t *bitmapPos = (uint16_t*)&vramBytes[((vram->bitmapPtr << 1) + yOffset) & 0x1ffff];
+    uint32_t yOffset = bitmapRow * 200;
+    uint32_t *bitmapPos = (uint32_t*)&vramBytes[((vram->bitmapPtr << 1) + yOffset) & 0x1ffff];
     uint16_t xpos = 8; // No scrolling, but framebuffer starts rendering after 8 pixels
-    *color32 = vram->bitmapPalette & 0x3f3f3f3f;
-    uint16_t c;
+    color32[0] = vram->bitmapPalette[0] & 0x3f3f3f3f;
+    color32[1] = vram->bitmapPalette[1] & 0x3f3f3f3f;
+    color32[2] = vram->bitmapPalette[2] & 0x3f3f3f3f;
+    color32[3] = vram->bitmapPalette[3] & 0x3f3f3f3f;
+    uint32_t c;
     for (uint8_t tile = 0; tile < BITMAP_BYTES_PER_LINE; tile++) {
-        // Due to little endian, left 8 pixels are now in lower 8 bits, so we need to store right
-        // byte first then left :derp:
+        // Due to little endian, color byte c contains the following order
+        // bit 0-3: pixel 7
+        // bit
         c = bitmapPos[tile];
-        fb[xpos+3] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+2] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+1] = colors[c&3];
-        c = c >> 2;
-        fb[xpos] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+7] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+6] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+5] = colors[c&3];
-        c = c >> 2;
-        fb[xpos+4] = colors[c&3];
+        // First byte
+        fb[xpos+1] = colors[c&15];
+        c = c >> 4;
+        fb[xpos] = colors[c&15];
+        c = c >> 4;
+        // Second byte
+        fb[xpos+3] = colors[c&15];
+        c = c >> 4;
+        fb[xpos+2] = colors[c&15];
+        c = c >> 4;
+        // Third byte
+        fb[xpos+5] = colors[c&15];
+        c = c >> 4;
+        fb[xpos+4] = colors[c&15];
+        c = c >> 4;
+        // Fourth byte
+        fb[xpos+7] = colors[c&15];
+        c = c >> 4;
+        fb[xpos+6] = colors[c&15];
         xpos+=8;
     }
 }
@@ -388,7 +397,6 @@ void init_app_stuff() {
 
         vram->colorMem[i] = c32;
     }
-    uint8_t palette = 0;
     uint8_t character = 32;
     for (int i = 0; i < 32768; i++) {
         vram->screen[i] = character++;
@@ -401,20 +409,24 @@ void init_app_stuff() {
     for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
         vram->spritePointer[i] = spriteTarget;
     }
-    const int bitmap_height = derp_height;
+    const int bitmap_height = sixteencolors_height;
     vram->bitmapPtr = 0x8100;
     vram->bitmapStart = 512;
     vram->bitmapHeight = bitmap_height;
-    vram->bitmapPalette = derp_palette;
+
+    uint8_t *palette = (uint8_t*)vram->bitmapPalette;
+    for (int i = 0; i < 16; i++) {
+        palette[i] = sixteencolors_palette[i];
+    }
     uint16_t bitmap_pos = 0;
-    uint16_t *target_bitmap = (uint16_t*)&vramBytes[vram->bitmapPtr << 1];
-    uint16_t w = derp_width/2; // Width in bytes, convert to 16-bit words
-    uint16_t xofs = (50-w)/2;
+    uint8_t *target_bitmap = (uint8_t*)&vramBytes[vram->bitmapPtr << 1];
+    uint16_t w = sixteencolors_width; // Width in bytes, convert to 16-bit words
+    const uint16_t bytes_per_line = 200;
+    uint16_t xofs = (bytes_per_line-w)/2;
     for (int y = 0; y < bitmap_height; y++) {
         for (int x = xofs; x < w+xofs; x++) {
-            int pos = y * 50 + x;
-            target_bitmap[pos] = derp[bitmap_pos++];
-
+            int pos = y * bytes_per_line + x;
+            target_bitmap[pos] = sixteencolors[bitmap_pos++];
         }
     }
 

@@ -18,17 +18,22 @@
 //#define DEBUG_PIN 7
 #define SCRW 64
 #define SCRH 512
-#define NUMBER_OF_SPRITES 8
+// Due to crappy performance, we cannot yet render all sprites flawlessly
+#define NUMBER_OF_RENDERED_SPRITES 12
+#define NUMBER_OF_SPRITES 16
 #define SPRITE_WIDTH 16
 #define CHARS_PER_LINE 52
 #define BITMAP_BYTES_PER_LINE 50
 #define V_VISIBLE_AREA 600
 #define LAST_VISIBLE_ROW 592
-#define SPRITE_RIGHT_EDGE 416
+#define SPRITE_RIGHT_EDGE 432
+#define FRAME_BUFFER_OFFSET 16
+#define FRAME_BUFFER_TILE_OFFSET 8
 #define ROWS_PER_FRAME 628
 #define FRAME_BUFFER_SIZE 512
 #define VGA_BASE_PIN 0
 #define DATABUS_BASE_PIN 8
+#define SPRITE_VERTICAL_OFFSET 112
 
 typedef struct {
     uint16_t visible_area;
@@ -84,20 +89,24 @@ uint32_t *color32;
 uint8_t framebuffer[4][FRAME_BUFFER_SIZE];
 
 typedef struct {
-    uint8_t screen[32768];                  // 0x00000
-    uint32_t colorMem[4096];                // 0x08000 - 4 unique colours per character
-    uint8_t font[4096];                     // 0x0c000 - 4 colour font
-    uint16_t spriteX[NUMBER_OF_SPRITES];    // 0x0d000
-    uint16_t spriteY[NUMBER_OF_SPRITES];    // 0x0d010
-    uint8_t spriteHeight[NUMBER_OF_SPRITES];// 0x0d020
-    uint8_t spritePointer[NUMBER_OF_SPRITES];//0x0d028
-    uint16_t scrollY;                       // 0x0d030
-    uint16_t scrollX;                       // 0x0d032
-    uint16_t bitmapStart;                   // 0x0d034 // 0-1024, 512 = first visible row
-    uint16_t bitmapHeight;                  // 0x0d036
-    uint16_t bitmapPtr;                     // 0x0d038 = Pointer in gfx mem in 2 byte blocks
-    uint32_t bitmapPalette[4];              // 0x0d03a
-    // 0x10000-0x1ffff Sprite data
+    uint8_t screen[4096];                   // 0x00000
+    uint32_t colorMem[4096];                // 0x01000 - 4 unique colours per character
+    uint8_t font[4096];                     // 0x05000 - 4 colour font
+    uint16_t spriteX[NUMBER_OF_SPRITES];    // 0x06000
+    uint16_t spriteY[NUMBER_OF_SPRITES];    // 0x06020
+    uint8_t spriteHeight[NUMBER_OF_SPRITES];// 0x06040
+    uint8_t spritePointer[NUMBER_OF_SPRITES];//0x06050
+    uint16_t scrollY;                       // 0x06060
+    uint16_t scrollX;                       // 0x06062
+    uint16_t reserved1;                     // 0x06064
+    uint16_t reserved2;                     // 0x06066
+    uint16_t reserved3;                     // 0x06068
+    uint16_t bitmapStart;                   // 0x0606a // 0-1024, 512 = first visible row
+    uint16_t bitmapHeight;                  // 0x0606c
+    uint16_t bitmapPtr;                     // 0x0606e = Pointer in gfx mem in 2 byte blocks
+    uint32_t bitmapPalette[4];              // 0x06070
+    // 0x6080-0xffff Free for bitmap use
+    // 0x10000-0x1ffff Sprite/bitmap data
 } Vram;
 
 uint8_t *spritePtr;
@@ -182,27 +191,38 @@ void init_sync_buffer(uint8_t buffer[], Timing *t, uint8_t vsync_mask) {
 }
 
 static inline void draw_sprites(uint8_t *fb) {
-    for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
-        int16_t spritePos = pixel_row-vram->spriteY[i];
-        if (spritePos < 0 || spritePos > vram->spriteHeight[i]) {
+    for (int i = 0; i < NUMBER_OF_RENDERED_SPRITES; i++) {
+        uint16_t spritePos = SPRITE_VERTICAL_OFFSET + pixel_row - vram->spriteY[i]; // 0 - 56 = 0
+        uint16_t xPos = vram->spriteX[i];
+        if (spritePos > vram->spriteHeight[i] || xPos > SPRITE_RIGHT_EDGE) {
             continue;
         }
-        uint8_t *sprite = &spritePtr[vram->spritePointer[i] << 8];
-        spritePos = spritePos << 4;
+        uint32_t *sprite = (uint32_t*)&spritePtr[(vram->spritePointer[i] << 8) + (spritePos << 4)];
+        uint32_t spriteCol;
 
-        int n = SPRITE_WIDTH;
-        uint16_t xPos = vram->spriteX[i];
-        if (xPos > SPRITE_RIGHT_EDGE) {
-            n = SPRITE_RIGHT_EDGE-xPos;
-        }
+        spriteCol = sprite[0];
+        fb[xPos] = (spriteCol & 0x80) ? fb[xPos] : (spriteCol & 0x3f);
+        fb[xPos+1] = (spriteCol & 0x8000) ? fb[xPos+1] : ((spriteCol >> 8) & 0x3f);
+        fb[xPos+2] = (spriteCol & 0x800000) ? fb[xPos+2] : ((spriteCol >> 16) & 0x3f);
+        fb[xPos+3] = (spriteCol & 0x80000000) ? fb[xPos+3] : ((spriteCol >> 24) & 0x3f);
 
-        for (int x = 0; x < n; x++) {
-            uint8_t c = sprite[spritePos++];
-            if ((c & 0x80) == 0) {
-                fb[xPos] = c & 63;
-            }
-            xPos++;
-        }
+        spriteCol = sprite[1];
+        fb[xPos+4] = (spriteCol & 0x80) ? fb[xPos+4] : (spriteCol & 0x3f);
+        fb[xPos+5] = (spriteCol & 0x8000) ? fb[xPos+5] : ((spriteCol >> 8) & 0x3f);
+        fb[xPos+6] = (spriteCol & 0x800000) ? fb[xPos+6] : ((spriteCol >> 16) & 0x3f);
+        fb[xPos+7] = (spriteCol & 0x80000000) ? fb[xPos+7] : ((spriteCol >> 24) & 0x3f);
+
+        spriteCol = sprite[2];
+        fb[xPos+8] = (spriteCol & 0x80) ? fb[xPos+8] : (spriteCol & 0x3f);
+        fb[xPos+9] = (spriteCol & 0x8000) ? fb[xPos+9] : ((spriteCol >> 8) & 0x3f);
+        fb[xPos+10] = (spriteCol & 0x800000) ? fb[xPos+10] : ((spriteCol >> 16) & 0x3f);
+        fb[xPos+11] = (spriteCol & 0x80000000) ? fb[xPos+11] : ((spriteCol >> 24) & 0x3f);
+
+        spriteCol = sprite[3];
+        fb[xPos+12] = (spriteCol & 0x80) ? fb[xPos+12] : (spriteCol & 0x3f);
+        fb[xPos+13] = (spriteCol & 0x8000) ? fb[xPos+13] : ((spriteCol >> 8) & 0x3f);
+        fb[xPos+14] = (spriteCol & 0x800000) ? fb[xPos+14] : ((spriteCol >> 16) & 0x3f);
+        fb[xPos+15] = (spriteCol & 0x80000000) ? fb[xPos+15] : ((spriteCol >> 24) & 0x3f);
     }
 }
 
@@ -210,7 +230,7 @@ static inline void draw_bitmap(uint8_t *fb) {
     uint16_t bitmapRow = (pixel_row - vram->bitmapStart - 512) & 0x1ff;
     uint32_t yOffset = bitmapRow * 200;
     uint32_t *bitmapPos = (uint32_t*)&vramBytes[((vram->bitmapPtr << 1) + yOffset) & 0x1ffff];
-    uint16_t xpos = 8; // No scrolling, but framebuffer starts rendering after 8 pixels
+    uint16_t xpos = FRAME_BUFFER_OFFSET; // No scrolling, but framebuffer starts rendering after 8 pixels
     color32[0] = vram->bitmapPalette[0] & 0x3f3f3f3f;
     color32[1] = vram->bitmapPalette[1] & 0x3f3f3f3f;
     color32[2] = vram->bitmapPalette[2] & 0x3f3f3f3f;
@@ -252,7 +272,7 @@ static inline void draw_tiles(uint8_t *fb) {
     uint8_t *scrPos = &vram->screen[yOffset];
     uint32_t *colorPos = &vram->colorMem[yOffset];
     uint8_t c;
-    uint16_t xpos = (7-vram->scrollX) & 7;
+    uint16_t xpos = FRAME_BUFFER_TILE_OFFSET + ((7-vram->scrollX) & 7);
 
     for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
         uint16_t font_offset = yMod + (scrPos[xOffset] << 4);
@@ -287,7 +307,7 @@ static inline void pixel_dma_handler() {
     pixel_row = next_row >> 1;
 
     uint8_t *fb = framebuffer[framebuffer_index[next_row]];
-    dma_channel_set_read_addr(dma_chan[current_dma], fb+8, false);
+    dma_channel_set_read_addr(dma_chan[current_dma], fb+FRAME_BUFFER_OFFSET, false);
 
     if (next_row&1) {
         return;
@@ -297,15 +317,9 @@ static inline void pixel_dma_handler() {
         //vram->bitmapStart = frameCounter & 0x3ff;
         //scrollPos++;
         vram->scrollX++;
-        //vram->scrollY++;
-        //vram->mode = ((frameCounter >> 9) & 1);
-        //vram.scrollY = sinTable[scrollPos++];
-        //vram.scrollX++;
-        for (int i = 0 ; i < NUMBER_OF_SPRITES; i++) {
-            //spriteX[i]++;
+        for (int i = 0 ; i < NUMBER_OF_RENDERED_SPRITES; i++) {
             spritePos[i]++;
             vram->spriteY[i] = sinTable[spritePos[i]];
-            vram->spriteX[i] = cosTable[spritePos[i]];
         }
     }
     if (next_row < LAST_VISIBLE_ROW) {
@@ -379,14 +393,10 @@ void init_buffers() {
 
 void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
-        sinTable[i] = 150 + 140 * sin(i * M_PI / 128);
+        sinTable[i] = SPRITE_VERTICAL_OFFSET + 300 - 96 + 64 * sin(i * M_PI / 128);
         cosTable[i] = 208 + 208 * cos(i * M_PI / 128);
     }
-    const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
-    for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
-        spritePos[i] = i << 2;
-        vram->spriteHeight[i] = 24;
-    }
+    //const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
     uint8_t c = 0;
     for (int i = 0; i < 4096; i++) {
         uint32_t c32 = 0;
@@ -398,7 +408,7 @@ void init_app_stuff() {
         vram->colorMem[i] = c32;
     }
     uint8_t character = 32;
-    for (int i = 0; i < 32768; i++) {
+    for (int i = 0; i < 4096; i++) {
         vram->screen[i] = character++;
         if (character > 254) {
             character = 32;
@@ -406,8 +416,11 @@ void init_app_stuff() {
     }
     const int spriteTarget = 0;
     memcpy(&spritePtr[spriteTarget << 8], spritedata, sizeof(spritedata));
-    for (int i = 0; i < NUMBER_OF_SPRITES; i++) {
+    for (int i = 0; i < NUMBER_OF_RENDERED_SPRITES; i++) {
         vram->spritePointer[i] = spriteTarget;
+        vram->spriteX[i] = (NUMBER_OF_RENDERED_SPRITES-i-1)*24+12;
+        spritePos[i] = i << 2;
+        vram->spriteHeight[i] = 24;
     }
     const int bitmap_height = sixteencolors_height;
     vram->bitmapPtr = 0x8100;
@@ -441,22 +454,13 @@ void init_vram() {
 }
 
 void boot_loader() {
-    stdio_init_all();
-/*
-    const int buf_size = 80;
-    char buffer[buf_size];
-    printf("PicoGFX\n");
-    while (true ) {
-        fgets(buffer, buf_size, stdin);
-        printf("You typed: %s\n", buffer);
-        sleep_ms(1000);
-    }*/
+//    stdio_init_all();
 }
 
 int main() {
     boot_loader();
     init_vram();
-    //debugMode = isDebug();
+
     debugMode = false;
 
     set_sys_clock_khz(270000, true);

@@ -34,7 +34,7 @@
 #define VGA_BASE_PIN 0
 #define DATABUS_BASE_PIN 8
 #define SPRITE_VERTICAL_OFFSET 112
-#define NUMBER_OF_FONTS 4
+#define NUMBER_OF_FONTS 2
 
 typedef struct {
     uint16_t visible_area;
@@ -96,23 +96,24 @@ typedef struct {
 
 typedef struct {
     Screen screens[2];                      // 0x00000-0x3FFF
-    uint8_t font[NUMBER_OF_FONTS][4096];    // 0x04000 - 4 x 4 colour fonts
-    uint32_t screenPalette[256];            // 0x08000
-    uint16_t spriteX[NUMBER_OF_SPRITES];    // 0x08100
-    uint16_t spriteY[NUMBER_OF_SPRITES];    // 0x08120
-    uint8_t spriteHeight[NUMBER_OF_SPRITES];// 0x08140
-    uint8_t spritePointer[NUMBER_OF_SPRITES];//0x08150
-    uint16_t scrollY;                       // 0x08160
-    uint16_t scrollX;                       // 0x08162
-    uint8_t  screenSelect;                  // 0x08164
-    uint16_t reserved2;                     // 0x08166
-    uint16_t reserved3;                     // 0x08168
-    uint16_t bitmapStart;                   // 0x0816a // 0-1024, 512 = first visible row
-    uint16_t bitmapHeight;                  // 0x0816c
-    uint16_t bitmapPtr;                     // 0x0816e = Pointer in gfx mem in 2 byte blocks
-    uint32_t bitmapPalette[4];              // 0x08170
-    uint8_t  fontSelect[64];                // 0x08180
-    // 0x081c0-0x0ffff Free for bitmap use
+    uint8_t font[NUMBER_OF_FONTS][4096];    // 0x04000 - 2 x 4 colour fonts
+    uint32_t screenPalette[256];            // 0x06000
+    uint16_t spriteX[NUMBER_OF_SPRITES];    // 0x06400
+    uint16_t spriteY[NUMBER_OF_SPRITES];    // 0x06420
+    uint8_t spriteHeight[NUMBER_OF_SPRITES];// 0x06440
+    uint8_t spritePointer[NUMBER_OF_SPRITES];//0x06450
+    uint16_t scrollY;                       // 0x06460
+    uint16_t scrollX;                       // 0x06462
+    uint8_t  screenSelect;                  // 0x06464
+    uint8_t  reserved1;                     // 0x06465
+    uint16_t reserved2;                     // 0x06466
+    uint16_t reserved3;                     // 0x06468
+    uint16_t bitmapStart;                   // 0x0646a // 0-1024, 512 = first visible row
+    uint16_t bitmapHeight;                  // 0x0646c
+    uint16_t bitmapPtr;                     // 0x0646e = Pointer in gfx mem in 2 byte blocks
+    uint32_t bitmapPalette[4];              // 0x06470
+    uint8_t  fontSelect[64];                // 0x06480
+    // 0x064c0-0x0ffff Free for bitmap use
     // 0x10000-0x1ffff Sprite/bitmap data
 } Vram;
 
@@ -136,7 +137,7 @@ const int SYNC_BUFFER_VSYNC = 1;
 
 uint16_t frameCounter = 0;
 int16_t sinTable[256];
-int16_t cosTable[256];
+int16_t bmpSinTable[256];
 
 uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
@@ -201,7 +202,7 @@ static inline void draw_sprites(uint8_t *fb) {
     for (int i = 0; i < NUMBER_OF_RENDERED_SPRITES; i++) {
         uint16_t spritePos = SPRITE_VERTICAL_OFFSET + pixel_row - vram->spriteY[i]; // 0 - 56 = 0
         uint16_t xPos = vram->spriteX[i];
-        if (spritePos > vram->spriteHeight[i] || xPos > SPRITE_RIGHT_EDGE) {
+        if (spritePos >= vram->spriteHeight[i] || xPos > SPRITE_RIGHT_EDGE) {
             continue;
         }
         uint32_t *sprite = (uint32_t*)&spritePtr[(vram->spritePointer[i] << 8) + (spritePos << 4)];
@@ -325,6 +326,7 @@ static inline void pixel_dma_handler() {
         frameCounter++;
         vram->screenSelect = frameCounter >> 8;
         vram->scrollX++;
+        vram->bitmapStart = bmpSinTable[spritePos[0]];
         for (int i = 0 ; i < NUMBER_OF_RENDERED_SPRITES; i++) {
             spritePos[i]++;
             vram->spriteY[i] = sinTable[spritePos[i]];
@@ -402,7 +404,7 @@ void init_buffers() {
 void init_app_stuff() {
     for (int i = 0; i < 256; i++) {
         sinTable[i] = SPRITE_VERTICAL_OFFSET + 300 - 96 + 64 * sin(i * M_PI / 128);
-        cosTable[i] = 208 + 208 * cos(i * M_PI / 128);
+        bmpSinTable[i] = 512+20+20*sin(i*M_PI/128);
     }
 
     // Test other fonts
@@ -451,7 +453,7 @@ void init_app_stuff() {
     }
     const int bitmap_height = sixteencolors_height;
     vram->bitmapPtr = 0x8100;
-    vram->bitmapStart = 512;
+    vram->bitmapStart = 528;
     vram->bitmapHeight = bitmap_height;
 
     uint8_t *palette = (uint8_t*)vram->bitmapPalette;

@@ -34,6 +34,7 @@
 #define VGA_BASE_PIN 0
 #define DATABUS_BASE_PIN 8
 #define SPRITE_VERTICAL_OFFSET 112
+#define NUMBER_OF_FONTS 4
 
 typedef struct {
     uint16_t visible_area;
@@ -90,22 +91,28 @@ uint8_t framebuffer[4][FRAME_BUFFER_SIZE];
 
 typedef struct {
     uint8_t screen[4096];                   // 0x00000
-    uint32_t colorMem[4096];                // 0x01000 - 4 unique colours per character
-    uint8_t font[4096];                     // 0x05000 - 4 colour font
-    uint16_t spriteX[NUMBER_OF_SPRITES];    // 0x06000
-    uint16_t spriteY[NUMBER_OF_SPRITES];    // 0x06020
-    uint8_t spriteHeight[NUMBER_OF_SPRITES];// 0x06040
-    uint8_t spritePointer[NUMBER_OF_SPRITES];//0x06050
-    uint16_t scrollY;                       // 0x06060
-    uint16_t scrollX;                       // 0x06062
-    uint16_t reserved1;                     // 0x06064
-    uint16_t reserved2;                     // 0x06066
-    uint16_t reserved3;                     // 0x06068
-    uint16_t bitmapStart;                   // 0x0606a // 0-1024, 512 = first visible row
-    uint16_t bitmapHeight;                  // 0x0606c
-    uint16_t bitmapPtr;                     // 0x0606e = Pointer in gfx mem in 2 byte blocks
-    uint32_t bitmapPalette[4];              // 0x06070
-    // 0x6080-0xffff Free for bitmap use
+    uint8_t colorMem[4096];                 // 0x01000 - 4 unique colours per character
+} Screen;
+
+typedef struct {
+    Screen screens[2];                      // 0x00000-0x3FFF
+    uint8_t font[NUMBER_OF_FONTS][4096];    // 0x04000 - 4 x 4 colour fonts
+    uint32_t screenPalette[256];            // 0x08000
+    uint16_t spriteX[NUMBER_OF_SPRITES];    // 0x08100
+    uint16_t spriteY[NUMBER_OF_SPRITES];    // 0x08120
+    uint8_t spriteHeight[NUMBER_OF_SPRITES];// 0x08140
+    uint8_t spritePointer[NUMBER_OF_SPRITES];//0x08150
+    uint16_t scrollY;                       // 0x08160
+    uint16_t scrollX;                       // 0x08162
+    uint8_t  screenSelect;                  // 0x08164
+    uint16_t reserved2;                     // 0x08166
+    uint16_t reserved3;                     // 0x08168
+    uint16_t bitmapStart;                   // 0x0816a // 0-1024, 512 = first visible row
+    uint16_t bitmapHeight;                  // 0x0816c
+    uint16_t bitmapPtr;                     // 0x0816e = Pointer in gfx mem in 2 byte blocks
+    uint32_t bitmapPalette[4];              // 0x08170
+    uint8_t  fontSelect[64];                // 0x08180
+    // 0x081c0-0x0ffff Free for bitmap use
     // 0x10000-0x1ffff Sprite/bitmap data
 } Vram;
 
@@ -269,15 +276,17 @@ static inline void draw_tiles(uint8_t *fb) {
     uint16_t yOffset = (yRow >> 3) << 6;
     uint16_t yMod = (yRow & 7) << 1;
     uint16_t xOffset = ((vram->scrollX & 0x1ff) >> 3);
-    uint8_t *scrPos = &vram->screen[yOffset];
-    uint32_t *colorPos = &vram->colorMem[yOffset];
+    uint8_t screen_select = vram->screenSelect & 1;
+    uint8_t *scrPos = &vram->screens[screen_select].screen[yOffset];
+    uint8_t *colorPos = &vram->screens[screen_select].colorMem[yOffset];
     uint8_t c;
     uint16_t xpos = FRAME_BUFFER_TILE_OFFSET + ((7-vram->scrollX) & 7);
 
+    uint8_t *font = vram->font[vram->fontSelect[yRow>>3]&(NUMBER_OF_FONTS-1)];
     for (uint8_t tile = 0; tile < CHARS_PER_LINE; tile++) {
         uint16_t font_offset = yMod + (scrPos[xOffset] << 4);
-        *color32 = colorPos[xOffset] & 0x3f3f3f3f;
-        c = vram->font[font_offset];
+        *color32 = vram->screenPalette[colorPos[xOffset]] & 0x3f3f3f3f;
+        c = font[font_offset];
         fb[xpos+3] = colors[c&3];
         c = c >> 2;
         fb[xpos+2] = colors[c&3];
@@ -286,7 +295,7 @@ static inline void draw_tiles(uint8_t *fb) {
         c = c >> 2;
         fb[xpos] = colors[c&3];
 
-        c = vram->font[font_offset + 1];
+        c = font[font_offset + 1];
         fb[xpos+7] = colors[c&3];
         c = c >> 2;
         fb[xpos+6] = colors[c&3];
@@ -314,8 +323,7 @@ static inline void pixel_dma_handler() {
     }
     if (next_row == 0) {
         frameCounter++;
-        //vram->bitmapStart = frameCounter & 0x3ff;
-        //scrollPos++;
+        vram->screenSelect = frameCounter >> 8;
         vram->scrollX++;
         for (int i = 0 ; i < NUMBER_OF_RENDERED_SPRITES; i++) {
             spritePos[i]++;
@@ -396,22 +404,41 @@ void init_app_stuff() {
         sinTable[i] = SPRITE_VERTICAL_OFFSET + 300 - 96 + 64 * sin(i * M_PI / 128);
         cosTable[i] = 208 + 208 * cos(i * M_PI / 128);
     }
-    //const int xOffset = (400-NUMBER_OF_SPRITES*16)/2;
-    uint8_t c = 0;
-    for (int i = 0; i < 4096; i++) {
+
+    // Test other fonts
+    uint8_t c = 1;
+    for (int i = 0; i < 255; i++) {
+        for (int n = 0; n < 16; n++) {
+            vram->font[1][i*16+n] = c;
+            c++;
+        }
+    }
+    for (int i = 0; i < 32; i++) {
+        vram->fontSelect[i*2] = 1;
+    }
+
+    c = 0;
+    for (int i = 0; i < 256; i++) {
         uint32_t c32 = 0;
         for (int j = 0; j < 3; j++) {
             c32 = c32 | ((c++) & 63);
             c32 = c32 << 8;
         }
-
-        vram->colorMem[i] = c32;
+        vram->screenPalette[i] = c32;
     }
     uint8_t character = 32;
+    uint8_t msgPtr = 0;
+    char aMessage[] = "Second page of screen ram allowing for dubbel buffering!";
     for (int i = 0; i < 4096; i++) {
-        vram->screen[i] = character++;
+        vram->screens[0].screen[i] = character++;
+        vram->screens[0].colorMem[i] = i&255;
         if (character > 254) {
             character = 32;
+        }
+        vram->screens[1].screen[i] = aMessage[msgPtr];
+        vram->screens[1].colorMem[i] = 3;
+        if (aMessage[++msgPtr] == 0) {
+            msgPtr = 0;
         }
     }
     const int spriteTarget = 0;
@@ -450,7 +477,7 @@ void init_vram() {
     color32 = (uint32_t*)colors;
     vram = (Vram*)vramBytes;
     spritePtr = &vramBytes[0x10000];
-    memcpy(vram->font, font, 4096);
+    memcpy(vram->font[0], font, 4096);
 }
 
 void boot_loader() {
@@ -501,7 +528,7 @@ int main() {
 //        if (!pio_sm_is_rx_fifo_empty(databus_pio, databus_sm)) {
             uint32_t v = store_address;
             for (int i = 0; i < 5; i++) {
-                vram->screen[5-i] = digits[(v >> (4*i)) & 0xf];
+                vram->screens[0].screen[5-i] = digits[(v >> (4*i)) & 0xf];
             }
             uint32_t data = pio_sm_get_blocking(databus_pio, databus_sm);
             uint32_t addr = (data >> 8) & 3;

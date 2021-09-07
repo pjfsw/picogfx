@@ -30,10 +30,10 @@ uint8_t *colors = (uint8_t*)&colors32;
 uint8_t demux_table[256];
 
 static inline uint32_t demultiplex(uint32_t pixels) {
-    return colors[demux_table[pixels & 0xff]]
-    | (colors[demux_table[(pixels >> 8) & 0xff]] << 8)
-    | (colors[demux_table[(pixels >> 16) & 0xff]] << 16)
-    | (colors[demux_table[(pixels >> 24) & 0xff]] << 24);
+    return colors[pixels & 0x03]
+    | (colors[(pixels >> 2) & 0x03] << 8)
+    | (colors[(pixels >> 4) & 0x03] << 16)
+    | (colors[(pixels >> 6) & 0x03] << 24);
 }
 
 static inline void vga_line() {

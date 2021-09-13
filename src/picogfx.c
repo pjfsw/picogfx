@@ -10,14 +10,11 @@
 #include "spritedata.h"
 #include "math.h"
 #include "font.h"
-//#include "derp.h"
 #include "sixteencolors.h"
 
 #define HSYNC_BIT 6
 #define VSYNC_BIT 7
-//#define DEBUG_PIN 7
-#define SCRW 64
-#define SCRH 512
+
 // Due to crappy performance, we cannot yet render all sprites flawlessly
 #define NUMBER_OF_RENDERED_SPRITES 12
 #define NUMBER_OF_SPRITES 16
@@ -30,7 +27,17 @@
 #define FRAME_BUFFER_OFFSET 16
 #define FRAME_BUFFER_TILE_OFFSET 8
 #define ROWS_PER_FRAME 628
+#undef HIRES
+#ifdef HIRES
+#define SYNC_BUFFER_SIZE 512
+#define FRAME_BUFFER_SIZE 1024
+#define PIXEL_CLOCK 40000000
+#else
+#define SYNC_BUFFER_SIZE 256
 #define FRAME_BUFFER_SIZE 512
+#define PIXEL_CLOCK 20000000
+#endif
+
 #define VGA_BASE_PIN 0
 #define DATABUS_BASE_PIN 8
 #define SPRITE_VERTICAL_OFFSET 112
@@ -41,7 +48,6 @@ typedef struct {
     uint16_t front_porch;
     uint16_t sync_pulse;
     uint16_t back_porch;
-    uint16_t length;
 } Timing;
 
 typedef struct {
@@ -51,18 +57,28 @@ typedef struct {
 } HVTiming;
 
 HVTiming vga_timing = {
+#ifdef HIRES    
+    .h = {
+        .visible_area = 800,
+        .front_porch = 40,
+        .sync_pulse = 128,
+        .back_porch = 88
+    },
+#else    
     .h = {
         .visible_area = 400,
         .front_porch = 20,
         .sync_pulse = 64,
         .back_porch = 44
     },
+#endif    
     .v = {
         .visible_area = 600,
         .front_porch = 1,
         .sync_pulse = 4,
         .back_porch = 23
-    }
+    },
+    .pixel_clock = PIXEL_CLOCK
 };
 
 typedef struct {
@@ -77,7 +93,7 @@ int dma_chan[4];
 uint16_t current_dma;
 uint16_t next_row;
 uint16_t pixel_row;
-uint8_t syncbuffer[2][256];
+uint8_t syncbuffer[2][SYNC_BUFFER_SIZE];
 uint8_t framebuffer_index[ROWS_PER_FRAME];
 uint8_t syncbuffer_index[ROWS_PER_FRAME];
 
@@ -143,14 +159,7 @@ uint16_t get_length(Timing *timing) {
     return timing->visible_area + timing->front_porch + timing->sync_pulse + timing->back_porch;
 }
 
-void set_800_600() {
-    vga_timing.h.length = get_length(&vga_timing.h);
-    vga_timing.v.length = get_length(&vga_timing.v);
-    vga_timing.pixel_clock = 20000000.0;
-}
-
 void configure_and_start_dma(PioConf *pio_conf) {
-    set_800_600();
     const int framebuffer_words = vga_timing.h.visible_area >> 2;
     const int sync_words = get_length(&vga_timing.h)/4 - framebuffer_words;
 
@@ -313,7 +322,7 @@ static inline void draw_tiles(uint8_t *fb) {
 static inline void pixel_dma_handler() {
     // The chained DMA has already started the next row when IRQ happens, so we need to increase
     // the counter here to be in sync with what we are setting up for next IRQ
-    next_row = (next_row + 1) % vga_timing.v.length;
+    next_row = (next_row + 1) % get_length(&vga_timing.v);
     pixel_row = next_row >> 1;
 
     uint8_t *fb = framebuffer[framebuffer_index[next_row]];
@@ -504,7 +513,7 @@ int main() {
         pio_gpio_init(databus_pio, DATABUS_BASE_PIN+i);
     }
 
-    float databus_clock_div = debugMode ? 65535 : (clock_get_hz(clk_sys) / 40000000.0);
+    float databus_clock_div = debugMode ? 65535 : (clock_get_hz(clk_sys) / PIXEL_CLOCK);
     databus_program_init(databus_pio, databus_sm, databus_offset, DATABUS_BASE_PIN, databus_clock_div);
 
     pio_conf.pio = pio0;

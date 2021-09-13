@@ -27,7 +27,7 @@
 #define FRAME_BUFFER_OFFSET 16
 #define FRAME_BUFFER_TILE_OFFSET 8
 #define ROWS_PER_FRAME 628
-#undef HIRES
+#define HIRES
 #ifdef HIRES
 #define SYNC_BUFFER_SIZE 512
 #define FRAME_BUFFER_SIZE 1024
@@ -318,6 +318,42 @@ static inline void draw_tiles(uint8_t *fb) {
     }
 }
 
+static inline void draw_hires(uint8_t *fb) {
+    uint16_t yRow = (pixel_row + vram->scrollY) & 0x1ff;
+    uint16_t yOffset = (yRow >> 3) << 6;
+    uint16_t yMod = (yRow & 7) << 1;
+    uint16_t xOffset = 0;
+    uint8_t screen_select = vram->screenSelect & 1;
+    uint8_t *scrPos = &vram->screens[screen_select].screen[yOffset];
+    uint8_t *colorPos = &vram->screens[screen_select].colorMem[yOffset];
+    uint8_t c;
+    uint16_t xpos = FRAME_BUFFER_TILE_OFFSET;
+
+    uint8_t *font = vram->font[vram->fontSelect[yRow>>3]&(NUMBER_OF_FONTS-1)];
+    for (uint8_t tile = 0; tile < 100; tile++) {
+        uint16_t font_offset = yMod + (scrPos[xOffset] << 4);
+        *color32 = vram->screenPalette[colorPos[xOffset]] & 0x3f3f3f3f;
+        c = font[font_offset];
+        fb[xpos+3] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+2] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+1] = colors[c&3];
+        c = c >> 2;
+        fb[xpos] = colors[c&3];
+
+        c = font[font_offset + 1];
+        fb[xpos+7] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+6] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+5] = colors[c&3];
+        c = c >> 2;
+        fb[xpos+4] = colors[c&3];
+        xpos+=8;
+        xOffset = (xOffset + 1) & 63;
+    }
+}
 
 static inline void pixel_dma_handler() {
     // The chained DMA has already started the next row when IRQ happens, so we need to increase
@@ -342,6 +378,9 @@ static inline void pixel_dma_handler() {
         }
     }
     if (next_row < LAST_VISIBLE_ROW) {
+#ifdef HIRES 
+        draw_hires(fb);
+#else
         int16_t bitmap_start = vram->bitmapStart - 512;
         if (pixel_row >= bitmap_start && pixel_row < bitmap_start + vram->bitmapHeight) {
             draw_bitmap(fb);
@@ -349,6 +388,7 @@ static inline void pixel_dma_handler() {
             draw_tiles(fb);
         }
         draw_sprites(fb);
+#endif    
     }
 }
 
